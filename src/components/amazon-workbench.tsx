@@ -1,0 +1,602 @@
+"use client";
+
+import { useRef, useState } from "react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  Check,
+  Clock3,
+  Download,
+  ExternalLink,
+  FileSpreadsheet,
+  FileText,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
+import Papa from "papaparse";
+import { AmazonMatchCard } from "@/components/amazon-match-card";
+import type {
+  AmazonMatchResponse,
+  AmazonMatchRow,
+  AmazonMatchStatus,
+  AmazonProductInput,
+} from "@/lib/amazon-types";
+import type { ParsedSource } from "@/lib/types";
+import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
+
+const MAX_PRODUCTS_PER_RUN = 50;
+
+interface ColumnMapping {
+  ean: number;
+  title: number | null;
+  brand: number | null;
+  variant: number | null;
+  size: number | null;
+  pack: number | null;
+  image: number | null;
+}
+
+interface MappedProduct extends AmazonProductInput {
+  rowNumber: number;
+  key: string;
+}
+
+interface AmazonProgress {
+  completed: number;
+  total: number;
+  currentTitle: string;
+}
+
+const initialProgress: AmazonProgress = { completed: 0, total: 0, currentTitle: "" };
+
+function detectedColumn(headers: string[], pattern: RegExp): number | null {
+  const index = headers.findIndex((header) => pattern.test(header.trim()));
+  return index >= 0 ? index : null;
+}
+
+function initialMapping(source: ParsedSource): ColumnMapping {
+  return {
+    ean: source.eanColumnIndex,
+    title: detectedColumn(source.headers, /description|product\s*name|item\s*name|title|^name$/i),
+    brand: detectedColumn(source.headers, /^brand$|manufacturer/i),
+    variant: detectedColumn(source.headers, /variant|flavou?r|scent|colour|color/i),
+    size: detectedColumn(source.headers, /^size$|volume|weight|net\s*content/i),
+    pack: detectedColumn(source.headers, /^pack$|pack\s*size|case\s*qty/i),
+    image: detectedColumn(source.headers, /image|picture|photo|img/i),
+  };
+}
+
+function cell(row: string[], index: number | null): string {
+  return index === null ? "" : (row[index] ?? "").trim();
+}
+
+function mappedProducts(source: ParsedSource, mapping: ColumnMapping): MappedProduct[] {
+  return source.rows.map((row, index) => {
+    const rawEan = cell(row, mapping.ean);
+    const input: AmazonProductInput = {
+      ean: normalizeEan(rawEan) ?? "",
+      title: cell(row, mapping.title).slice(0, 240),
+      brand: cell(row, mapping.brand).slice(0, 120),
+      variant: cell(row, mapping.variant).slice(0, 120),
+      size: cell(row, mapping.size).slice(0, 80),
+      pack: cell(row, mapping.pack).slice(0, 40),
+      regalImageUrl: cell(row, mapping.image).slice(0, 2048),
+    };
+    const key = JSON.stringify([
+      input.ean,
+      input.title.toLowerCase(),
+      input.brand.toLowerCase(),
+      input.variant.toLowerCase(),
+      input.size.toLowerCase(),
+      input.pack.toLowerCase(),
+      input.regalImageUrl,
+    ]);
+    return { ...input, rowNumber: index + 1, key };
+  });
+}
+
+function uniqueProducts(products: MappedProduct[]): MappedProduct[] {
+  const unique = new Map<string, MappedProduct>();
+  for (const product of products) {
+    if (!product.ean && !product.title) continue;
+    if (!unique.has(product.key)) unique.set(product.key, product);
+  }
+  return Array.from(unique.values());
+}
+
+function emptyRow(product: MappedProduct, status: AmazonMatchStatus, message: string): AmazonMatchRow {
+  return {
+    ...product,
+    status,
+    message,
+    regalImageUrl: "",
+    bestCandidate: null,
+    candidates: [],
+    decision: null,
+  };
+}
+
+function waitFor(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Search stopped", "AbortError"));
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      window.clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("Search stopped", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function formulaSafe(value: string): string {
+  const cleaned = value.replace(/[\u0000-\u0008]/g, "");
+  return /^[\s]*[=+@\-]/.test(cleaned) ? `'${cleaned}` : cleaned;
+}
+
+function downloadResults(results: AmazonMatchRow[], fileName: string): void {
+  const headers = [
+    "Row",
+    "EAN",
+    "Brand",
+    "Product",
+    "Variant",
+    "Source size",
+    "Pack",
+    "Match tier",
+    "Review decision",
+    "Amazon title",
+    "Amazon price",
+    "Image pixel similarity",
+    "Amazon URL",
+    "Match notes",
+  ];
+  const rows = results.map((result) =>
+    [
+      String(result.rowNumber),
+      result.ean,
+      result.brand,
+      result.title,
+      result.variant,
+      result.size,
+      result.pack,
+      result.status,
+      result.decision ?? "",
+      result.bestCandidate?.title ?? "",
+      result.bestCandidate?.price ?? "",
+      result.bestCandidate?.imageSimilarity === null || result.bestCandidate?.imageSimilarity === undefined
+        ? ""
+        : `${result.bestCandidate.imageSimilarity}%`,
+      result.bestCandidate?.productUrl ?? "",
+      result.bestCandidate?.reason ?? result.message,
+    ].map(formulaSafe),
+  );
+  const csv = Papa.unparse([headers, ...rows], { quotes: true });
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${fileName.replace(/\.[^.]+$/, "") || "amazon-matches"}-amazon-matches.csv`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ColumnSelect({
+  field,
+  label,
+  required,
+  source,
+  value,
+  onChange,
+}: {
+  field: keyof ColumnMapping;
+  label: string;
+  required?: boolean;
+  source: ParsedSource;
+  value: number | null;
+  onChange: (field: keyof ColumnMapping, value: number | null) => void;
+}) {
+  return (
+    <label className="amazon-column-field" htmlFor={`amazon-column-${field}`}>
+      <span>{label}{required ? " *" : ""}</span>
+      <select
+        id={`amazon-column-${field}`}
+        value={value ?? ""}
+        onChange={(event) => onChange(field, event.target.value === "" ? null : Number(event.target.value))}
+      >
+        {!required ? <option value="">Not provided</option> : null}
+        {source.headers.map((header, index) => (
+          <option key={`${field}-${index}`} value={index}>
+            {header || `Column ${index + 1}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function AmazonWorkbench() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const [source, setSource] = useState<ParsedSource | null>(null);
+  const [mapping, setMapping] = useState<ColumnMapping | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [hasRun, setHasRun] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [results, setResults] = useState<AmazonMatchRow[]>([]);
+  const [progress, setProgress] = useState<AmazonProgress>(initialProgress);
+
+  async function handleFile(file: File) {
+    setErrorMessage("");
+    setResults([]);
+    setHasRun(false);
+    setSource(null);
+    setMapping(null);
+    setUploadedFile(null);
+    setIsParsing(true);
+    try {
+      const parsed = await parseSpreadsheet(file);
+      setSource(parsed);
+      setMapping(initialMapping(parsed));
+      setUploadedFile(file);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "This file could not be read.");
+    } finally {
+      setIsParsing(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  function clearFile() {
+    controllerRef.current?.abort();
+    setIsRunning(false);
+    setSource(null);
+    setMapping(null);
+    setUploadedFile(null);
+    setResults([]);
+    setHasRun(false);
+    setErrorMessage("");
+    setProgress(initialProgress);
+  }
+
+  function updateMapping(field: keyof ColumnMapping, value: number | null) {
+    if (!mapping) return;
+    if (field === "ean" && value === null) return;
+    setMapping({ ...mapping, [field]: value });
+    setResults([]);
+    setHasRun(false);
+    setErrorMessage("");
+  }
+
+  async function startMatching() {
+    if (!source || !mapping || isRunning) return;
+    setErrorMessage("");
+    const products = mappedProducts(source, mapping);
+    const queue = uniqueProducts(products);
+    if (!queue.length) {
+      setErrorMessage("No EANs or product names were found in the mapped columns.");
+      return;
+    }
+    if (queue.length > MAX_PRODUCTS_PER_RUN) {
+      setErrorMessage(`This run has ${queue.length} unique products. Select a file with ${MAX_PRODUCTS_PER_RUN} or fewer unique products to keep Amazon requests paced.`);
+      return;
+    }
+
+    const initialRows = products.map((product) =>
+      emptyRow(product, product.ean || product.title ? "pending" : "not-found", product.ean || product.title ? "Waiting in the search queue." : "No EAN or product name in this row."),
+    );
+    const resultsByKey = new Map<string, AmazonMatchRow>();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setResults(initialRows);
+    setHasRun(true);
+    setIsRunning(true);
+    setProgress({ completed: 0, total: queue.length, currentTitle: "" });
+
+    try {
+      for (let index = 0; index < queue.length; index += 1) {
+        if (controller.signal.aborted) break;
+        const product = queue[index];
+        setProgress({ completed: index, total: queue.length, currentTitle: product.title || product.ean });
+
+        try {
+          const response = await fetch("/api/amazon/match", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ean: product.ean,
+              title: product.title,
+              brand: product.brand,
+              variant: product.variant,
+              size: product.size,
+              pack: product.pack,
+              regal_image_url: product.regalImageUrl,
+            }),
+            signal: controller.signal,
+          });
+          const payload = (await response.json().catch(() => null)) as AmazonMatchResponse | { error?: string; detail?: string } | null;
+          if (!response.ok || !payload || !("status" in payload)) {
+            throw new Error(
+              (payload && "error" in payload && payload.error) ||
+                (payload && "detail" in payload && payload.detail) ||
+                "The Amazon lookup could not be completed.",
+            );
+          }
+
+          const matchPayload = payload as AmazonMatchResponse;
+          const rowResult: AmazonMatchRow = {
+            ...product,
+            status: matchPayload.status,
+            message: matchPayload.message,
+            regalImageUrl: matchPayload.regalImageUrl || product.regalImageUrl,
+            bestCandidate: matchPayload.bestCandidate,
+            candidates: matchPayload.candidates ?? [],
+            decision: null,
+          };
+          resultsByKey.set(product.key, rowResult);
+          setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
+          setProgress({ completed: index + 1, total: queue.length, currentTitle: "" });
+
+          if (matchPayload.status === "blocked") {
+            setErrorMessage("Amazon blocked this batch. The remaining products were not sent; try again later or review the Amazon links manually.");
+            break;
+          }
+
+          if (index < queue.length - 1) await waitFor(250, controller.signal);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") break;
+          const rowResult: AmazonMatchRow = {
+            ...product,
+            status: "error",
+            message: error instanceof Error ? error.message : "The Amazon lookup failed.",
+            regalImageUrl: product.regalImageUrl,
+            bestCandidate: null,
+            candidates: [],
+            decision: null,
+          };
+          resultsByKey.set(product.key, rowResult);
+          setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
+          setProgress({ completed: index + 1, total: queue.length, currentTitle: "" });
+        }
+      }
+    } finally {
+      setIsRunning(false);
+      controllerRef.current = null;
+      setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Not searched.")));
+      setProgress((current) => ({ ...current, currentTitle: "" }));
+    }
+  }
+
+  function updateDecision(rowNumber: number, decision: "confirmed" | "rejected") {
+    setResults((current) =>
+      current.map((result) => (result.rowNumber === rowNumber ? { ...result, decision } : result)),
+    );
+  }
+
+  const products = source && mapping ? mappedProducts(source, mapping) : [];
+  const queueSize = uniqueProducts(products).length;
+  const highCount = results.filter((result) => result.status === "high").length;
+  const reviewCount = results.filter((result) => result.status === "medium" || result.status === "low").length;
+  const notFoundCount = results.filter((result) => result.status === "not-found").length;
+
+  return (
+    <main className="page-shell amazon-page">
+      <header className="topbar">
+        <Link className="brand" href="/" aria-label="FinderApp home">
+          <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.3} /></span>
+          <span className="brand-name">finder<span>app</span></span>
+        </Link>
+        <nav className="topbar-right" aria-label="FinderApp tools">
+          <Link className="topbar-link" href="/">EAN lookup</Link>
+          <span className="amazon-nav-current" aria-current="page">Amazon matching</span>
+        </nav>
+      </header>
+
+      <section className="hero" aria-labelledby="amazon-page-title">
+        <div className="hero-copy">
+          <p className="eyebrow"><span className="eyebrow-line" /> PRODUCT MATCH REVIEW</p>
+          <h1 id="amazon-page-title">Find the right listing,<br /><span>then check the image.</span></h1>
+          <p className="hero-description">
+            Search Amazon UK from your EAN, product title, brand, variant and size. Strong EAN evidence is separated from results that need a human check.
+          </p>
+        </div>
+        <div className="hero-note" aria-label="Search pacing note">
+          <span className="hero-note-icon"><ShieldCheck size={18} /></span>
+          <span><strong>One product at a time</strong><small>Searches are paced and stop on CAPTCHA blocks.</small></span>
+        </div>
+      </section>
+
+      <section className="workbench-card amazon-workbench" aria-label="Amazon product matching workspace">
+        <div className="workbench-topline">
+          <div>
+            <p className="section-kicker">Amazon UK · image comparison</p>
+            <h2>Upload a product spreadsheet</h2>
+          </div>
+          <div className="step-list" aria-label="Three-step process">
+            <span className="step-item step-active"><b>1</b> Upload</span>
+            <span className="step-connector" />
+            <span className={`step-item${hasRun ? " step-active" : ""}`}><b>2</b> Match</span>
+            <span className="step-connector" />
+            <span className={`step-item${results.length && !isRunning ? " step-active" : ""}`}><b>3</b> Review</span>
+          </div>
+        </div>
+
+        <section className="upload-section" aria-labelledby="amazon-upload-title">
+          <div className="upload-heading-row">
+            <div>
+              <p className="section-kicker">01 / Your source file</p>
+              <h2 id="amazon-upload-title">Product list</h2>
+            </div>
+            <span className="quiet-tag">CSV or XLSX</span>
+          </div>
+          {source ? (
+            <div className="source-card amazon-source-card">
+              <div className="source-file-icon" aria-hidden="true">
+                {source.fileKind === "xlsx" ? <FileSpreadsheet size={19} /> : <FileText size={19} />}
+              </div>
+              <div className="source-file-copy">
+                <strong title={source.fileName}>{source.fileName}</strong>
+                <span>{source.rows.length} data {source.rows.length === 1 ? "row" : "rows"} · header on row {source.headerRowNumber ?? "not detected"}</span>
+              </div>
+              <span className="ready-check" aria-label="File ready"><Check size={15} /></span>
+              <button type="button" className="icon-button remove-file" onClick={clearFile} disabled={isRunning} aria-label="Remove uploaded file" title="Remove file">
+                <X size={17} />
+              </button>
+            </div>
+          ) : (
+            <div
+              className={`upload-dropzone${isDragging ? " is-dragging" : ""}${isParsing || isRunning ? " is-disabled" : ""}`}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (!isParsing && !isRunning) setIsDragging(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDragging(false);
+                if (!isParsing && !isRunning) {
+                  const file = event.dataTransfer.files.item(0);
+                  if (file) void handleFile(file);
+                }
+              }}
+            >
+              <input
+                ref={inputRef}
+                id="amazon-spreadsheet-file"
+                className="visually-hidden"
+                type="file"
+                accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.item(0);
+                  if (file) void handleFile(file);
+                }}
+                disabled={isParsing || isRunning}
+              />
+              <span className="upload-icon" aria-hidden="true">{isParsing ? <span className="spinner" /> : <Upload size={20} />}</span>
+              <div className="upload-copy">
+                <p className="upload-title">{isParsing ? "Reading your file…" : "Drop your file here"}</p>
+                <p className="upload-description">or <label htmlFor="amazon-spreadsheet-file">browse to upload</label></p>
+              </div>
+              <span className="upload-format-note">.xlsx or .csv · up to 5 MB</span>
+            </div>
+          )}
+          <p className="privacy-note">Files stay in this browser. Only mapped product fields and a source image URL are sent to the matcher.</p>
+        </section>
+
+        {source && mapping ? (
+          <div className="amazon-mapping-section">
+            <div className="amazon-mapping-heading">
+              <div>
+                <p className="section-kicker">02 / Match fields</p>
+                <h3>Confirm the columns</h3>
+              </div>
+              <span className="quiet-tag">{source.rows.length} source rows</span>
+            </div>
+            <div className="amazon-column-grid">
+              <ColumnSelect field="ean" label="EAN / barcode" required source={source} value={mapping.ean} onChange={updateMapping} />
+              <ColumnSelect field="title" label="Product title" source={source} value={mapping.title} onChange={updateMapping} />
+              <ColumnSelect field="brand" label="Brand" source={source} value={mapping.brand} onChange={updateMapping} />
+              <ColumnSelect field="variant" label="Variant" source={source} value={mapping.variant} onChange={updateMapping} />
+              <ColumnSelect field="size" label="Size" source={source} value={mapping.size} onChange={updateMapping} />
+              <ColumnSelect field="pack" label="Pack" source={source} value={mapping.pack} onChange={updateMapping} />
+              <ColumnSelect field="image" label="Regal/source image" source={source} value={mapping.image} onChange={updateMapping} />
+            </div>
+          </div>
+        ) : null}
+
+        {errorMessage ? <p className="inline-error" role="alert">{errorMessage}</p> : null}
+
+        <div className="match-options amazon-match-options">
+          <div className="crawl-note">
+            <Clock3 size={17} aria-hidden="true" />
+            <span>
+              Searches are sequential, with a 3-second minimum between Amazon requests. CAPTCHA and rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+            </span>
+          </div>
+          <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
+            {isRunning ? "Searching…" : "Start matching"}
+            {!isRunning ? <ArrowRight size={17} /> : null}
+          </button>
+        </div>
+        {source && queueSize > 0 ? (
+          <p className="run-estimate">{queueSize} unique {queueSize === 1 ? "product" : "products"} · duplicate rows share a result · each product may require up to three searches</p>
+        ) : null}
+
+        {isRunning ? (
+          <div className="progress-card amazon-progress-card" role="status" aria-live="polite">
+            <div className="progress-topline">
+              <div className="progress-title-wrap">
+                <span className="progress-spinner"><Clock3 size={15} /></span>
+                <div>
+                  <strong>Searching Amazon UK</strong>
+                  <span>{progress.currentTitle ? `Current product: ${progress.currentTitle}` : "Waiting for the next product"}</span>
+                </div>
+              </div>
+              <button type="button" className="text-button" onClick={() => controllerRef.current?.abort()}>Stop</button>
+            </div>
+            <div className="progress-track" aria-label={`${progress.completed} of ${progress.total} products checked`}>
+              <span style={{ width: `${progress.total ? (progress.completed / progress.total) * 100 : 0}%` }} />
+            </div>
+            <p className="progress-footnote">{progress.completed} of {progress.total} products checked. A result is not saved until you download it.</p>
+          </div>
+        ) : null}
+
+        {hasRun ? (
+          <>
+            <div className="section-divider" />
+            <div className="results-heading-row amazon-results-heading">
+              <div>
+                <p className="section-kicker">03 / Match review</p>
+                <h2>Compare the images and listing details</h2>
+              </div>
+              <button type="button" className="secondary-button export-button" onClick={() => downloadResults(results, uploadedFile?.name ?? "amazon-matches")} disabled={!results.length}>
+                <Download size={15} aria-hidden="true" /> Export CSV
+              </button>
+            </div>
+            <div className="amazon-summary-grid" aria-label="Match summary">
+              <div className="amazon-summary-card summary-high"><strong>{highCount}</strong><span>High · EAN evidence</span></div>
+              <div className="amazon-summary-card summary-review"><strong>{reviewCount}</strong><span>Medium / low · review</span></div>
+              <div className="amazon-summary-card summary-missing"><strong>{notFoundCount}</strong><span>Not found</span></div>
+              <span className="result-count">{results.length} source {results.length === 1 ? "row" : "rows"}</span>
+            </div>
+            <div className="amazon-results-list">
+              {results.map((result) => (
+                <AmazonMatchCard key={`${result.rowNumber}-${result.key}`} result={result} onDecision={updateDecision} />
+              ))}
+            </div>
+            <p className="results-disclaimer amazon-disclaimer">
+              The image score uses the notebook&apos;s 32 × 32 grayscale pixel-difference heuristic; it is only a visual hint, not proof of a match. High matches require the EAN to appear exactly in the Amazon result text. Medium and low matches remain reviewable.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="section-divider" />
+            <div className="results-empty">
+              <span className="empty-icon"><ExternalLink size={18} /></span>
+              <div><strong>Your Amazon comparison will appear here</strong><p>Upload a product list, confirm its columns, then start matching.</p></div>
+            </div>
+          </>
+        )}
+      </section>
+
+      <footer className="page-footer">
+        <span>finderapp <span className="footer-separator">/</span> Regal lookup + Amazon listing review</span>
+        <span>Marketplace results can be unavailable or rate-limited. <a href="https://www.amazon.co.uk" target="_blank" rel="noreferrer">Open Amazon UK <ExternalLink size={11} /></a></span>
+      </footer>
+    </main>
+  );
+}

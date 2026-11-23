@@ -1238,3 +1238,444 @@ label:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.amazon-nav-current {
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.amazon-mapping-section {
+  margin-top: 23px;
+  padding-top: 20px;
+  border-top: 1px solid #eef0f3;
+}
+
+.amazon-mapping-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.amazon-mapping-heading h3 {
+  margin: 5px 0 0;
+  color: var(--navy);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.35px;
+}
+
+.amazon-column-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.amazon-column-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #69758a;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.amazon-column-field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #e0e5eb;
+  border-radius: 8px;
+  color: #344562;
+  background: #fff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.amazon-source-card {
+  grid-template-columns: 42px minmax(0, 1fr) 26px 34px;
+}
+
+.amazon-match-options {
+  margin-top: 19px;
+}
+
+.amazon-results-heading {
+  margin-bottom: 16px;
+}
+
+.amazon-summary-grid {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.amazon-summary-card {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px;
+  border: 1px solid #edf0f3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.amazon-summary-card strong {
+  color: var(--navy);
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.amazon-summary-card span {
+  color: #78849a;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.summary-high strong { color: var(--green); }
+.summary-review strong { color: #9a6a12; }
+.summary-missing strong { color: #78849a; }
+
+.amazon-results-list {
+  display: grid;
+  gap: 12px;
+}
+
+.amazon-result-card {
+  padding: 16px;
+  border: 1px solid #e9edf1;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.amazon-result-high { border-color: #dcece2; }
+.amazon-result-medium { border-color: #f0e5c9; }
+.amazon-result-low { border-color: #e7eaf0; }
+.amazon-result-blocked,
+.amazon-result-error { border-color: #f0d5d3; }
+
+.amazon-result-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 13px;
+}
+
+.amazon-row-number {
+  margin: 0 0 5px;
+  color: #939dad;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 1px;
+}
+
+.amazon-result-topline h3 {
+  margin: 0;
+  color: #344562;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.amazon-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 5px 0 0;
+  color: #8792a2;
+  font-size: 9px;
+}
+
+.amazon-result-meta code {
+  color: #65728a;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+}
+
+.amazon-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.amazon-status-high { color: #18724f; background: #e8f5ee; }
+.amazon-status-medium { color: #8c681d; background: #fff5df; }
+.amazon-status-low { color: #68748a; background: #eef1f5; }
+.amazon-status-not-found { color: #8c681d; background: #fff5df; }
+.amazon-status-blocked,
+.amazon-status-error { color: #a34a46; background: #fff0ef; }
+.amazon-status-pending { color: #6f7c91; background: #eef1f5; }
+
+.amazon-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.amazon-compare-panel {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #edf0f3;
+  border-radius: 9px;
+  background: #fbfcfd;
+}
+
+.amazon-compare-label {
+  margin: 0 0 8px;
+  color: #8a95a5;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.8px;
+}
+
+.amazon-image-frame {
+  position: relative;
+  min-height: 148px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #edf0f3;
+  border-radius: 7px;
+  background:
+    linear-gradient(45deg, #f6f7f9 25%, transparent 25%),
+    linear-gradient(-45deg, #f6f7f9 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #f6f7f9 75%),
+    linear-gradient(-45deg, transparent 75%, #f6f7f9 75%),
+    #fff;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+
+.amazon-image-frame img {
+  width: 100%;
+  height: 148px;
+  object-fit: contain;
+  padding: 8px;
+}
+
+.amazon-image-empty {
+  display: grid;
+  place-items: center;
+  color: #b1bac6;
+}
+
+.amazon-image-label {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 4px 6px;
+  border: 1px solid rgba(228, 232, 238, 0.86);
+  border-radius: 5px;
+  color: #748096;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.amazon-compare-title {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 9px 0 0;
+  color: #344562;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.amazon-compare-detail {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: #8993a2;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amazon-product-link,
+.amazon-no-match a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  color: #18724f;
+  font-size: 9px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.amazon-product-link:hover,
+.amazon-no-match a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.amazon-result-bottomline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.amazon-match-reason {
+  margin: 0;
+  color: #6f7a8d;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.amazon-review-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.amazon-review-button {
+  min-height: 31px;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 9px;
+}
+
+.amazon-review-button.is-selected {
+  border-color: #cfe7d8;
+  color: #18724f;
+  background: #eff8f2;
+}
+
+.amazon-review-button.is-rejected {
+  border-color: #f0d3d1;
+  color: #a34a46;
+  background: #fff5f4;
+}
+
+.amazon-auto-note {
+  flex: 0 0 auto;
+  color: #8792a2;
+  font-size: 9px;
+}
+
+.amazon-decision-note {
+  margin: 10px 0 0;
+  color: #18724f;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.amazon-decision-note.is-rejected { color: #a34a46; }
+
+.amazon-result-message {
+  margin: 10px 0 0;
+  color: #748095;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.amazon-no-match {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid #f1ead9;
+  border-radius: 9px;
+  color: #9a6a12;
+  background: #fffcf5;
+}
+
+.amazon-no-match > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.amazon-no-match strong {
+  color: #6c5a35;
+  font-size: 10px;
+}
+
+.amazon-no-match p {
+  margin: 4px 0 0;
+  color: #8a806a;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.amazon-progress-card {
+  margin-top: 16px;
+}
+
+.amazon-disclaimer {
+  padding-bottom: 23px;
+}
+
+@media (max-width: 800px) {
+  .amazon-column-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .amazon-page .topbar-right {
+    gap: 12px;
+  }
+
+  .amazon-nav-current,
+  .amazon-page .topbar-link {
+    font-size: 10px;
+  }
+
+  .amazon-column-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-result-card {
+    padding: 12px;
+  }
+
+  .amazon-result-topline {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .amazon-result-meta {
+    gap: 5px 9px;
+  }
+
+  .amazon-compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .amazon-image-frame,
+  .amazon-image-frame img {
+    min-height: 125px;
+    height: 125px;
+  }
+
+  .amazon-result-bottomline {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .amazon-summary-grid {
+    flex-wrap: wrap;
+  }
+
+  .amazon-summary-card {
+    flex: 1;
+    min-width: 125px;
+  }
+}

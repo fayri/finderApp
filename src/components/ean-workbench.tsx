@@ -253,6 +253,7 @@ export function EanWorkbench() {
           <span className="brand-name">finder<span>app</span></span>
         </Link>
         <div className="topbar-right">
+          <Link className="topbar-link" href="/amazon">Amazon matching</Link>
           <span className="catalog-status"><span /> Regal Sales catalogue</span>
           <a className="topbar-link" href="https://regalsales.co.uk" target="_blank" rel="noreferrer">
             Visit site <ExternalLink size={13} />

@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FinderApp — Regal Sales EAN lookup",
+  title: "FinderApp — EAN & Amazon product matching",
   description:
-    "Upload a CSV or Excel list of EANs, match products in the Regal Sales catalogue, and export image URLs, titles, pack sizes and product sizes.",
+    "Match product EANs against Regal Sales, then compare Amazon UK listings by title, brand, variant, size and product image.",
   applicationName: "FinderApp",
   openGraph: {
-    title: "FinderApp — Regal Sales EAN lookup",
-    description: "Turn product EANs into an enriched spreadsheet.",
+    title: "FinderApp — EAN & Amazon product matching",
+    description: "Enrich product data and review Amazon UK listing matches.",
     type: "website",
   },
 };

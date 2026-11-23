@@ -78,17 +78,23 @@ function makeRows(
   resultsByEan: Map<string, LookupResult>,
   keepPending: boolean,
 ): ProductResult[] {
+  const packColumnIndex = source.headers.findIndex((header) => header.trim().toLowerCase() === "pack");
+  const sizeColumnIndex = source.headers.findIndex((header) => header.trim().toLowerCase() === "size");
+
   return source.rows.map((row, index) => {
     const rawEan = row[source.eanColumnIndex]?.trim() ?? "";
     const normalizedEan = normalizeEan(rawEan);
+    const pack = packColumnIndex >= 0 ? row[packColumnIndex]?.trim() ?? "" : "";
+    const size = sizeColumnIndex >= 0 ? row[sizeColumnIndex]?.trim() ?? "" : "";
+
     if (!normalizedEan) {
       return {
         rowNumber: index + 1,
         ean: rawEan,
         imageUrl: "",
         title: "",
-        pack: "",
-        size: "",
+        pack,
+        size,
         productUrl: "",
         status: "invalid",
         note: rawEan ? "Use 8–14 digits" : "EAN cell is empty",
@@ -96,15 +102,15 @@ function makeRows(
     }
 
     const match = resultsByEan.get(normalizedEan);
-    if (match) return { ...match, rowNumber: index + 1 };
+    if (match) return { ...match, rowNumber: index + 1, pack, size };
 
     return {
       rowNumber: index + 1,
       ean: normalizedEan,
       imageUrl: "",
       title: "",
-      pack: "",
-      size: "",
+      pack,
+      size,
       productUrl: "",
       status: keepPending ? "pending" : "not-found",
       note: keepPending ? undefined : "",
@@ -255,7 +261,7 @@ export function EanWorkbench() {
           <p className="eyebrow"><span className="eyebrow-line" /> SIMPLE PRODUCT MATCH</p>
           <h1 id="page-title">Product details,<br /><span>matched by barcode.</span></h1>
           <p className="hero-description">
-            Upload a spreadsheet of EANs. Find the product image, title, pack and size from the Regal Sales catalogue, then export a clean file.
+            Match EANs against the Regal Sales catalogue for product images and titles. Pack and size come from your uploaded spreadsheet.
           </p>
         </div>
         <div className="hero-note" aria-label="Privacy note">
@@ -327,7 +333,7 @@ export function EanWorkbench() {
 
       <footer className="page-footer">
         <span>finderapp <span className="footer-separator">/</span> Product data, without the copy-paste</span>
-        <span>Product information is sourced from <a href="https://regalsales.co.uk" target="_blank" rel="noreferrer">regalsales.co.uk</a>.</span>
+        <span>Product images and titles are sourced from <a href="https://regalsales.co.uk" target="_blank" rel="noreferrer">regalsales.co.uk</a>; pack and size come from your file.</span>
       </footer>
     </main>
   );

@@ -107,12 +107,22 @@ function detailFromCard(
 }
 
 function imageFromCard($: ReturnType<typeof load>, card: ReturnType<ReturnType<typeof load>>): string {
-  for (const image of card.find("img").toArray()) {
-    const source =
-      $(image).attr("data-src") ??
-      $(image).attr("data-original") ??
-      $(image).attr("src") ??
-      $(image).attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0];
+  const sources: string[] = [];
+  const collectSource = (image: ReturnType<ReturnType<typeof load>>) => {
+    const srcset = image.attr("srcset")?.split(",")[0]?.trim().split(/\s+/)[0];
+    const source = [image.attr("data-src"), image.attr("data-original"), image.attr("src"), srcset].find(
+      (value) => typeof value === "string" && value.trim(),
+    );
+    if (source) sources.push(source.trim());
+  };
+
+  card.find("img").each((_, image) => collectSource($(image)));
+  card.find("noscript").each((_, element) => {
+    const fallback = load($(element).text());
+    fallback("img").each((_, image) => collectSource(fallback(image)));
+  });
+
+  for (const source of sources) {
     const url = absoluteRegalUrl(source);
     if (url && url.includes("/product/image/")) return url;
   }

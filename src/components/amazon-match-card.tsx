@@ -42,13 +42,15 @@ function ImageFrame({ src, alt, label }: { src: string; alt: string; label: stri
 export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
   const candidate = result.bestCandidate;
   const isReview = result.status === "medium" || result.status === "low";
+  const headingId = result.rowNumber === 0 ? "amazon-single-item-result" : `amazon-row-${result.rowNumber}`;
+  const rowLabel = result.rowNumber === 0 ? "SINGLE ITEM" : `ROW ${result.rowNumber.toString().padStart(2, "0")}`;
 
   return (
-    <article className={`amazon-result-card amazon-result-${result.status}`} aria-labelledby={`amazon-row-${result.rowNumber}`}>
+    <article className={`amazon-result-card amazon-result-${result.status}`} aria-labelledby={headingId}>
       <div className="amazon-result-topline">
         <div>
-          <p className="amazon-row-number">ROW {result.rowNumber.toString().padStart(2, "0")}</p>
-          <h3 id={`amazon-row-${result.rowNumber}`}>{result.title || result.brand || result.ean || "Untitled product"}</h3>
+          <p className="amazon-row-number">{rowLabel}</p>
+          <h3 id={headingId}>{result.title || result.brand || result.ean || "Untitled product"}</h3>
           <p className="amazon-result-meta">
             {result.ean ? <span>EAN <code>{result.ean}</code></span> : <span>No EAN supplied</span>}
             {result.size ? <span>Size {result.size}</span> : null}
@@ -85,10 +87,10 @@ export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
               <ImageFrame
                 src={result.regalImageUrl}
                 alt={`Source product image for ${result.title || result.ean}`}
-                label="Regal / uploaded"
+                label="Source image"
               />
               <p className="amazon-compare-title">{result.title || "No title in source file"}</p>
-              <p className="amazon-compare-detail">{[result.brand, result.variant, result.size, result.pack && `Pack ${result.pack}`].filter(Boolean).join(" · ") || "Product details from your file"}</p>
+              <p className="amazon-compare-detail">{[result.brand, result.variant, result.size, result.pack && `Pack ${result.pack}`].filter(Boolean).join(" · ") || "No additional source details supplied"}</p>
             </section>
             <section className="amazon-compare-panel" aria-label="Amazon UK candidate">
               <p className="amazon-compare-label">AMAZON UK CANDIDATE</p>

@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FinderApp — EAN & Amazon product matching",
+  title: "FinderApp — Product lookup & Amazon matching",
   description:
-    "Match product EANs against Regal Sales, then compare Amazon UK listings by title, brand, variant, size and product image.",
+    "Search Amazon UK from a product title or image URL, match product EANs against Regal Sales, and review listing matches.",
   applicationName: "FinderApp",
   openGraph: {
-    title: "FinderApp — EAN & Amazon product matching",
-    description: "Enrich product data and review Amazon UK listing matches.",
+    title: "FinderApp — Product lookup & Amazon matching",
+    description: "Test a product by title or image, enrich EAN data, and review Amazon UK listing matches.",
     type: "website",
   },
 };

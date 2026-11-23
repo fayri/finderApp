@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Papa from "papaparse";
 import { AmazonMatchCard } from "@/components/amazon-match-card";
+import { AmazonSingleItemTest } from "@/components/amazon-single-item-test";
 import type {
   AmazonMatchResponse,
   AmazonMatchRow,
@@ -429,6 +430,8 @@ export function AmazonWorkbench() {
             <span className={`step-item${results.length && !isRunning ? " step-active" : ""}`}><b>3</b> Review</span>
           </div>
         </div>
+
+        <AmazonSingleItemTest />
 
         <section className="upload-section" aria-labelledby="amazon-upload-title">
           <div className="upload-heading-row">

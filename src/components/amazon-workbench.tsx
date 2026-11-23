@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { ToolNavigation } from "@/components/tool-navigation";
 import {
   ArrowRight,
   Check,
@@ -397,10 +398,7 @@ export function AmazonWorkbench() {
           <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.3} /></span>
           <span className="brand-name">finder<span>app</span></span>
         </Link>
-        <nav className="topbar-right" aria-label="FinderApp tools">
-          <Link className="topbar-link" href="/">EAN lookup</Link>
-          <span className="amazon-nav-current" aria-current="page">Amazon matching</span>
-        </nav>
+        <ToolNavigation active="amazon" />
       </header>
 
       <section className="hero" aria-labelledby="amazon-page-title">

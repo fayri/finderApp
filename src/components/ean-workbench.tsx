@@ -2,8 +2,9 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Clock3, ExternalLink, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import { ResultsPanel } from "@/components/results-panel";
+import { ToolNavigation } from "@/components/tool-navigation";
 import { UploadPanel } from "@/components/upload-panel";
 import { downloadCsv, downloadXlsx, normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 import type { LookupProgress, LookupResult, ParsedSource, ProductResult } from "@/lib/types";
@@ -252,13 +253,7 @@ export function EanWorkbench() {
           <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.3} /></span>
           <span className="brand-name">finder<span>app</span></span>
         </Link>
-        <div className="topbar-right">
-          <Link className="topbar-link" href="/amazon">Amazon matching</Link>
-          <span className="catalog-status"><span /> Regal Sales catalogue</span>
-          <a className="topbar-link" href="https://regalsales.co.uk" target="_blank" rel="noreferrer">
-            Visit site <ExternalLink size={13} />
-          </a>
-        </div>
+        <ToolNavigation active="regal" />
       </header>
 
       <section className="hero" aria-labelledby="page-title">

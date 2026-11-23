@@ -107,7 +107,6 @@ label:focus-visible {
 }
 
 .topbar-right,
-.catalog-status,
 .topbar-link {
   display: inline-flex;
   align-items: center;
@@ -117,19 +116,8 @@ label:focus-visible {
   gap: 24px;
 }
 
-.catalog-status {
+.tool-navigation {
   gap: 8px;
-  color: #59657b;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.catalog-status > span {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: #25a474;
-  box-shadow: 0 0 0 3px rgba(37, 164, 116, 0.12);
 }
 
 .topbar-link {
@@ -138,6 +126,18 @@ label:focus-visible {
   font-size: 12px;
   text-decoration: none;
   transition: color 160ms ease;
+}
+
+.tool-nav-link {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.tool-nav-link[aria-current="page"] {
+  color: var(--navy);
+  background: var(--green-soft);
 }
 
 .topbar-link:hover,
@@ -1098,15 +1098,6 @@ label:focus-visible {
     gap: 11px;
   }
 
-  .catalog-status {
-    font-size: 0;
-  }
-
-  .catalog-status > span {
-    width: 8px;
-    height: 8px;
-  }
-
   .topbar-link {
     font-size: 10px;
   }
@@ -1237,13 +1228,6 @@ label:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-.amazon-nav-current {
-  color: var(--navy);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
 }
 
 .amazon-mapping-section {
@@ -1633,7 +1617,6 @@ label:focus-visible {
     gap: 12px;
   }
 
-  .amazon-nav-current,
   .amazon-page .topbar-link {
     font-size: 10px;
   }

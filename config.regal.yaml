@@ -1,0 +1,45 @@
+# Regal (regalsales.co.uk) - Sana Commerce storefront.
+# !! Selectors below are EDUCATED GUESSES, not verified against the live site.
+# Run once with --debug --limit 1 and check output/debug/*.html to tune them.
+input_columns:
+  title: "Description"
+  pack: "Pack"
+  size: "Size"
+
+site:
+  base_url: "https://regalsales.co.uk"
+  search_url: "https://regalsales.co.uk/search?q={ean}"
+  result_link_selector: ".product-list a[href], .sana-product-list a[href], [class*='product-item'] a[href], [class*='productlist'] a[href]"
+  not_found_text: "No products found"
+  cookie_accept_selector: null
+  title_selector: "h1"
+  product_ready_selector: "h1"
+  # Search for the sample EAN returned 0 products for a logged-out visitor, so the catalogue
+  # may only be searchable after login. Enable and export SUPPLIER_USER / SUPPLIER_PASS.
+  login:
+    enabled: false
+    url: "https://regalsales.co.uk/profile/login"
+    user_selector: "input[type=email], input[name*=mail i], input[name*=user i]"
+    pass_selector: "input[type=password]"
+    submit_selector: "button[type=submit], input[type=submit]"
+
+images:
+  selectors:
+    - "[class*='product-image'] img"
+    - "[class*='gallery'] img"
+    - "[class*='zoom'] img"
+    - "meta[property='og:image']"
+  attributes: ["data-zoom-image", "data-large", "data-src", "src", "content", "href"]
+  include_json_ld: true
+  include_srcset: true
+  exclude_patterns: ["placeholder", "logo", "sprite", "icon", "\\.svg", "/gina/", "no-image", "noimage"]
+  url_rewrites: []
+
+matching:
+  verify_ean_on_page: false   # Sana pages may not print the EAN; the search hit is the match
+
+run:
+  headless: true
+  delay_seconds: 1.0
+  timeout_ms: 25000
+  retries: 2

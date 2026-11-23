@@ -78,12 +78,16 @@ function makeRows(
   resultsByEan: Map<string, LookupResult>,
   keepPending: boolean,
 ): ProductResult[] {
+  const titleColumnIndex = source.headers.findIndex((header) =>
+    /^(description|product(?: name)?|item(?: name)?|name)$/i.test(header.trim()),
+  );
   const packColumnIndex = source.headers.findIndex((header) => header.trim().toLowerCase() === "pack");
   const sizeColumnIndex = source.headers.findIndex((header) => header.trim().toLowerCase() === "size");
 
   return source.rows.map((row, index) => {
     const rawEan = row[source.eanColumnIndex]?.trim() ?? "";
     const normalizedEan = normalizeEan(rawEan);
+    const title = titleColumnIndex >= 0 ? row[titleColumnIndex]?.trim() ?? "" : "";
     const pack = packColumnIndex >= 0 ? row[packColumnIndex]?.trim() ?? "" : "";
     const size = sizeColumnIndex >= 0 ? row[sizeColumnIndex]?.trim() ?? "" : "";
 
@@ -92,7 +96,7 @@ function makeRows(
         rowNumber: index + 1,
         ean: rawEan,
         imageUrl: "",
-        title: "",
+        title,
         pack,
         size,
         productUrl: "",
@@ -102,13 +106,13 @@ function makeRows(
     }
 
     const match = resultsByEan.get(normalizedEan);
-    if (match) return { ...match, rowNumber: index + 1, pack, size };
+    if (match) return { ...match, rowNumber: index + 1, title, pack, size };
 
     return {
       rowNumber: index + 1,
       ean: normalizedEan,
       imageUrl: "",
-      title: "",
+      title,
       pack,
       size,
       productUrl: "",
@@ -261,7 +265,7 @@ export function EanWorkbench() {
           <p className="eyebrow"><span className="eyebrow-line" /> SIMPLE PRODUCT MATCH</p>
           <h1 id="page-title">Product details,<br /><span>matched by barcode.</span></h1>
           <p className="hero-description">
-            Match EANs against the Regal Sales catalogue for product images and titles. Pack and size come from your uploaded spreadsheet.
+            Match EANs against Regal Sales for product images. Product descriptions, pack and size come from your uploaded spreadsheet.
           </p>
         </div>
         <div className="hero-note" aria-label="Privacy note">
@@ -333,7 +337,7 @@ export function EanWorkbench() {
 
       <footer className="page-footer">
         <span>finderapp <span className="footer-separator">/</span> Product data, without the copy-paste</span>
-        <span>Product images and titles are sourced from <a href="https://regalsales.co.uk" target="_blank" rel="noreferrer">regalsales.co.uk</a>; pack and size come from your file.</span>
+        <span>Product images are sourced from <a href="https://regalsales.co.uk" target="_blank" rel="noreferrer">regalsales.co.uk</a>; descriptions, pack and size come from your file.</span>
       </footer>
     </main>
   );

@@ -193,7 +193,7 @@ export function ResultsPanel({
             <p className="table-limit-note">Showing the first {visibleResults.length} rows. All rows are included in your export.</p>
           ) : null}
           <p className="results-disclaimer">
-            Product images and catalogue titles are from Regal Sales; pack and size are from your uploaded file. Verify product details before using them commercially.
+            Product images are from Regal Sales; descriptions, pack and size are from your uploaded file. Verify product details before using them commercially.
           </p>
         </>
       )}

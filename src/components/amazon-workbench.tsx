@@ -26,10 +26,53 @@ import type {
   AmazonProductInput,
 } from "@/lib/amazon-types";
 import type { ParsedSource } from "@/lib/types";
+import { fallbackCategory, isProductCategoryId, type ProductCategoryId } from "@/lib/amazon-categories";
 import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 
 const MAX_PRODUCTS_PER_RUN = 100;
 const MAX_CONCURRENT_PRODUCTS = 2;
+
+async function prepareCategories(titles: string[], signal: AbortSignal) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch("/api/amazon/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titles }),
+        signal,
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { categoryIds?: unknown[]; usedFallback?: boolean }
+        | null;
+      const categoryIds = payload?.categoryIds;
+
+      if (
+        response.ok &&
+        Array.isArray(categoryIds) &&
+        categoryIds.length === titles.length &&
+        categoryIds.every(isProductCategoryId)
+      ) {
+        return {
+          categoryIds,
+          usedFallback: Boolean(payload?.usedFallback),
+          serviceUnavailable: false,
+        };
+      }
+
+      if (response.status < 500 && response.status !== 429) break;
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+
+    if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 350));
+  }
+
+  return {
+    categoryIds: titles.map(fallbackCategory) as ProductCategoryId[],
+    usedFallback: true,
+    serviceUnavailable: true,
+  };
+}
 
 interface ColumnMapping {
   ean: number;
@@ -301,21 +344,17 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     setProgress({ completed: 0, total: queue.length, activeProducts: [] });
 
     try {
-      const categoryResponse = await fetch("/api/amazon/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ titles: queue.map((product) => product.title) }),
-        signal: controller.signal,
-      });
-      const categoryPayload = (await categoryResponse.json().catch(() => null)) as
-        | { categoryIds?: string[]; usedFallback?: boolean; error?: string }
-        | null;
-      if (!categoryResponse.ok || !categoryPayload || !Array.isArray(categoryPayload.categoryIds) || categoryPayload.categoryIds.length !== queue.length) {
-        throw new Error(categoryPayload?.error || "Product categories could not be prepared. Try again.");
-      }
-
-      const categorizedQueue = queue.map((product, index) => ({ ...product, category: categoryPayload.categoryIds?.[index] ?? "other" }));
-      if (categoryPayload.usedFallback) {
+      const categoryResult = await prepareCategories(
+        queue.map((product) => product.title),
+        controller.signal,
+      );
+      const categorizedQueue = queue.map((product, index) => ({
+        ...product,
+        category: categoryResult.categoryIds[index] ?? fallbackCategory(product.title),
+      }));
+      if (categoryResult.serviceUnavailable) {
+        setCategoryNotice("The category service was temporarily unavailable; title-based categories were used and matching continued.");
+      } else if (categoryResult.usedFallback) {
         setCategoryNotice("AI categorization was unavailable; title-keyword categories were used instead.");
       }
 

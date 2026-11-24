@@ -23,7 +23,7 @@ export interface AmazonSearchCandidate {
   eanMatch: boolean;
   sizeMatch: boolean;
   imageSimilarity?: number | null;
-  searchedBy: "ean" | "detail" | "brand";
+  searchedBy: "ean" | "detail" | "brand" | "category";
 }
 
 export interface AmazonMatchResponse {

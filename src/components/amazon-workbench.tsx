@@ -28,7 +28,8 @@ import type {
 import type { ParsedSource } from "@/lib/types";
 import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 
-const MAX_PRODUCTS_PER_RUN = 50;
+const MAX_PRODUCTS_PER_RUN = 100;
+const MAX_CONCURRENT_PRODUCTS = 2;
 
 interface ColumnMapping {
   ean: number;
@@ -43,15 +44,16 @@ interface ColumnMapping {
 interface MappedProduct extends AmazonProductInput {
   rowNumber: number;
   key: string;
+  category?: string;
 }
 
 interface AmazonProgress {
   completed: number;
   total: number;
-  currentTitle: string;
+  activeProducts: Array<{ key: string; title: string }>;
 }
 
-const initialProgress: AmazonProgress = { completed: 0, total: 0, currentTitle: "" };
+const initialProgress: AmazonProgress = { completed: 0, total: 0, activeProducts: [] };
 
 function detectedColumn(headers: string[], pattern: RegExp): number | null {
   const index = headers.findIndex((header) => pattern.test(header.trim()));
@@ -118,25 +120,6 @@ function emptyRow(product: MappedProduct, status: AmazonMatchStatus, message: st
     candidates: [],
     decision: null,
   };
-}
-
-function waitFor(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Search stopped", "AbortError"));
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    const abort = () => {
-      window.clearTimeout(timeout);
-      signal.removeEventListener("abort", abort);
-      reject(new DOMException("Search stopped", "AbortError"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
 }
 
 function formulaSafe(value: string): string {
@@ -235,12 +218,14 @@ export function AmazonWorkbench() {
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [categoryNotice, setCategoryNotice] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [results, setResults] = useState<AmazonMatchRow[]>([]);
   const [progress, setProgress] = useState<AmazonProgress>(initialProgress);
 
   async function handleFile(file: File) {
     setErrorMessage("");
+    setCategoryNotice("");
     setResults([]);
     setHasRun(false);
     setSource(null);
@@ -269,6 +254,7 @@ export function AmazonWorkbench() {
     setResults([]);
     setHasRun(false);
     setErrorMessage("");
+    setCategoryNotice("");
     setProgress(initialProgress);
   }
 
@@ -279,11 +265,13 @@ export function AmazonWorkbench() {
     setResults([]);
     setHasRun(false);
     setErrorMessage("");
+    setCategoryNotice("");
   }
 
   async function startMatching() {
     if (!source || !mapping || isRunning) return;
     setErrorMessage("");
+    setCategoryNotice("");
     const products = mappedProducts(source, mapping);
     const queue = uniqueProducts(products);
     if (!queue.length) {
@@ -304,79 +292,123 @@ export function AmazonWorkbench() {
     setResults(initialRows);
     setHasRun(true);
     setIsRunning(true);
-    setProgress({ completed: 0, total: queue.length, currentTitle: "" });
+    setProgress({ completed: 0, total: queue.length, activeProducts: [] });
 
     try {
-      for (let index = 0; index < queue.length; index += 1) {
-        if (controller.signal.aborted) break;
-        const product = queue[index];
-        setProgress({ completed: index, total: queue.length, currentTitle: product.title || product.ean });
+      const categoryResponse = await fetch("/api/amazon/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titles: queue.map((product) => product.title) }),
+        signal: controller.signal,
+      });
+      const categoryPayload = (await categoryResponse.json().catch(() => null)) as
+        | { categoryIds?: string[]; usedFallback?: boolean; error?: string }
+        | null;
+      if (!categoryResponse.ok || !categoryPayload || !Array.isArray(categoryPayload.categoryIds) || categoryPayload.categoryIds.length !== queue.length) {
+        throw new Error(categoryPayload?.error || "Product categories could not be prepared. Try again.");
+      }
 
-        try {
-          const response = await fetch("/api/amazon/match", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ean: product.ean,
-              title: product.title,
-              brand: product.brand,
-              variant: product.variant,
-              size: product.size,
-              pack: product.pack,
-              regal_image_url: product.regalImageUrl,
-            }),
-            signal: controller.signal,
-          });
-          const payload = (await response.json().catch(() => null)) as AmazonMatchResponse | { error?: string; detail?: string } | null;
-          if (!response.ok || !payload || !("status" in payload)) {
-            throw new Error(
-              (payload && "error" in payload && payload.error) ||
-                (payload && "detail" in payload && payload.detail) ||
-                "The Amazon lookup could not be completed.",
-            );
+      const categorizedQueue = queue.map((product, index) => ({ ...product, category: categoryPayload.categoryIds?.[index] ?? "other" }));
+      if (categoryPayload.usedFallback) {
+        setCategoryNotice("AI categorization was unavailable; title-keyword categories were used instead.");
+      }
+
+      let nextIndex = 0;
+      let stopAfterBlock = false;
+
+      async function runWorker() {
+        while (!controller.signal.aborted && !stopAfterBlock) {
+          const index = nextIndex++;
+          if (index >= categorizedQueue.length) return;
+
+          const product = categorizedQueue[index];
+          let completedProduct = false;
+          setProgress((current) => ({
+            ...current,
+            activeProducts: [...current.activeProducts, { key: product.key, title: product.title || product.ean }],
+          }));
+
+          try {
+            const response = await fetch("/api/amazon/match", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ean: product.ean,
+                title: product.title,
+                brand: product.brand,
+                variant: product.variant,
+                size: product.size,
+                pack: product.pack,
+                category: product.category,
+                regal_image_url: product.regalImageUrl,
+              }),
+              signal: controller.signal,
+            });
+            const payload = (await response.json().catch(() => null)) as AmazonMatchResponse | { error?: string; detail?: string } | null;
+            if (controller.signal.aborted) return;
+            if (!response.ok || !payload || !("status" in payload)) {
+              throw new Error(
+                (payload && "error" in payload && payload.error) ||
+                  (payload && "detail" in payload && payload.detail) ||
+                  "The Amazon lookup could not be completed.",
+              );
+            }
+
+            const matchPayload = payload as AmazonMatchResponse;
+            const rowResult: AmazonMatchRow = {
+              ...product,
+              status: matchPayload.status,
+              message: matchPayload.message,
+              regalImageUrl: matchPayload.regalImageUrl || product.regalImageUrl,
+              bestCandidate: matchPayload.bestCandidate,
+              candidates: matchPayload.candidates ?? [],
+              decision: null,
+            };
+            resultsByKey.set(product.key, rowResult);
+            setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
+            completedProduct = true;
+
+            if (matchPayload.status === "blocked") {
+              stopAfterBlock = true;
+              setErrorMessage("Amazon blocked this batch. New product searches have stopped; wait before retrying or review the Amazon links manually.");
+              controller.abort();
+            }
+          } catch (error) {
+            if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+            const rowResult: AmazonMatchRow = {
+              ...product,
+              status: "error",
+              message: error instanceof Error ? error.message : "The Amazon lookup failed.",
+              regalImageUrl: product.regalImageUrl,
+              bestCandidate: null,
+              candidates: [],
+              decision: null,
+            };
+            resultsByKey.set(product.key, rowResult);
+            setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
+            completedProduct = true;
+          } finally {
+            setProgress((current) => ({
+              ...current,
+              completed: current.completed + (completedProduct ? 1 : 0),
+              activeProducts: current.activeProducts.filter((activeProduct) => activeProduct.key !== product.key),
+            }));
           }
-
-          const matchPayload = payload as AmazonMatchResponse;
-          const rowResult: AmazonMatchRow = {
-            ...product,
-            status: matchPayload.status,
-            message: matchPayload.message,
-            regalImageUrl: matchPayload.regalImageUrl || product.regalImageUrl,
-            bestCandidate: matchPayload.bestCandidate,
-            candidates: matchPayload.candidates ?? [],
-            decision: null,
-          };
-          resultsByKey.set(product.key, rowResult);
-          setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
-          setProgress({ completed: index + 1, total: queue.length, currentTitle: "" });
-
-          if (matchPayload.status === "blocked") {
-            setErrorMessage("Amazon blocked this batch. The remaining products were not sent; try again later or review the Amazon links manually.");
-            break;
-          }
-
-          if (index < queue.length - 1) await waitFor(250, controller.signal);
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") break;
-          const rowResult: AmazonMatchRow = {
-            ...product,
-            status: "error",
-            message: error instanceof Error ? error.message : "The Amazon lookup failed.",
-            regalImageUrl: product.regalImageUrl,
-            bestCandidate: null,
-            candidates: [],
-            decision: null,
-          };
-          resultsByKey.set(product.key, rowResult);
-          setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Waiting in the search queue.")));
-          setProgress({ completed: index + 1, total: queue.length, currentTitle: "" });
         }
+      }
+
+      await Promise.all(
+        Array.from({ length: Math.min(MAX_CONCURRENT_PRODUCTS, categorizedQueue.length) }, () => runWorker()),
+      );
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setErrorMessage(error instanceof Error ? error.message : "Product categories could not be prepared. Try again.");
       }
     } finally {
       setIsRunning(false);
       controllerRef.current = null;
       setResults(products.map((item) => resultsByKey.get(item.key) ?? emptyRow(item, "pending", "Not searched.")));
-      setProgress((current) => ({ ...current, currentTitle: "" }));
+      setProgress((current) => ({ ...current, activeProducts: [] }));
     }
   }
 
@@ -412,7 +444,7 @@ export function AmazonWorkbench() {
         </div>
         <div className="hero-note" aria-label="Search pacing note">
           <span className="hero-note-icon"><ShieldCheck size={18} /></span>
-          <span><strong>One product at a time</strong><small>Searches are paced and stop on CAPTCHA blocks.</small></span>
+          <span><strong>Two products at a time</strong><small>Amazon searches stay 3 seconds apart and stop on CAPTCHA blocks.</small></span>
         </div>
       </section>
 
@@ -525,7 +557,7 @@ export function AmazonWorkbench() {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Searches are sequential, with a 3-second minimum between Amazon requests. CAPTCHA and rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Only product titles are sent for categorization. Two products are processed at once, while Amazon requests remain globally spaced by at least 3 seconds. CAPTCHA and rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
@@ -533,8 +565,9 @@ export function AmazonWorkbench() {
             {!isRunning ? <ArrowRight size={17} /> : null}
           </button>
         </div>
+        {categoryNotice ? <p className="run-estimate" role="status">{categoryNotice}</p> : null}
         {source && queueSize > 0 ? (
-          <p className="run-estimate">{queueSize} unique {queueSize === 1 ? "product" : "products"} · duplicate rows share a result · each product may require up to three searches</p>
+          <p className="run-estimate">{queueSize} unique {queueSize === 1 ? "product" : "products"} · duplicate rows share a result · up to five Amazon searches per product</p>
         ) : null}
 
         {isRunning ? (
@@ -544,7 +577,7 @@ export function AmazonWorkbench() {
                 <span className="progress-spinner"><Clock3 size={15} /></span>
                 <div>
                   <strong>Searching Amazon UK</strong>
-                  <span>{progress.currentTitle ? `Current product: ${progress.currentTitle}` : "Waiting for the next product"}</span>
+                  <span>{progress.activeProducts.length ? `Processing ${progress.activeProducts.length} ${progress.activeProducts.length === 1 ? "product" : "products"} in parallel` : "Categorizing product titles before search"}</span>
                 </div>
               </div>
               <button type="button" className="text-button" onClick={() => controllerRef.current?.abort()}>Stop</button>
@@ -552,7 +585,7 @@ export function AmazonWorkbench() {
             <div className="progress-track" aria-label={`${progress.completed} of ${progress.total} products checked`}>
               <span style={{ width: `${progress.total ? (progress.completed / progress.total) * 100 : 0}%` }} />
             </div>
-            <p className="progress-footnote">{progress.completed} of {progress.total} products checked. A result is not saved until you download it.</p>
+            <p className="progress-footnote">{progress.completed} of {progress.total} products checked. Amazon searches remain at least 3 seconds apart. A result is not saved until you download it.</p>
           </div>
         ) : null}
 

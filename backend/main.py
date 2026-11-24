@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import threading
 import time
 import urllib.parse
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -20,9 +22,13 @@ REGAL_ORIGIN = "https://regalsales.co.uk"
 AMAZON_ORIGIN = "https://www.amazon.co.uk"
 AMAZON_MIN_GAP_SECONDS = 3.0
 AMAZON_TIMEOUT_SECONDS = 15
+AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CANDIDATES = 8
+CATEGORY_DICTIONARY = json.loads(
+    (Path(__file__).resolve().parent.parent / "product_category_terms.json").read_text(encoding="utf-8")
+)["categories"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -44,6 +50,7 @@ class MatchRequest(BaseModel):
     variant: str = Field(default="", max_length=120)
     size: str = Field(default="", max_length=80)
     pack: str = Field(default="", max_length=40)
+    category: str = Field(default="", max_length=40)
     regal_image_url: str = Field(default="", max_length=2048)
 
     @field_validator("ean")
@@ -62,6 +69,7 @@ class AmazonBlocked(Exception):
 app = FastAPI(title="FinderApp Amazon Matcher", docs_url=None, redoc_url=None)
 _amazon_lock = threading.Lock()
 _last_amazon_request_at = 0.0
+_amazon_blocked_until = 0.0
 
 
 @app.middleware("http")
@@ -141,7 +149,18 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     normalized_product_title = " ".join(sorted(product_tokens))
     normalized_candidate_title = " ".join(sorted(candidate_tokens))
     sequence_score = SequenceMatcher(None, normalized_product_title, normalized_candidate_title).ratio()
-    title_score = round((title_coverage * 0.7) + (sequence_score * 0.3), 3)
+    direct_title_score = (title_coverage * 0.7) + (sequence_score * 0.3)
+    category = CATEGORY_DICTIONARY.get(product.category, {})
+    alias_tokens = [tokens(alias) for alias in category.get("aliases", [])]
+    alias_tokens = [alias for alias in alias_tokens if alias]
+    category_match = any(alias.issubset(candidate_tokens) for alias in alias_tokens)
+    category_words = set().union(*alias_tokens) if alias_tokens else set()
+    specific_product_tokens = product_tokens - category_words
+    specific_overlap = len(specific_product_tokens & candidate_tokens)
+    semantic_title_match = category_match and (
+        not specific_product_tokens or specific_overlap >= max(1, (len(specific_product_tokens) + 2) // 3)
+    )
+    title_score = round(max(direct_title_score, 0.52 if semantic_title_match else 0), 3)
 
     brand_match = not brand_tokens or brand_tokens.issubset(candidate_tokens)
     variant_match = not variant_tokens or variant_tokens.issubset(candidate_tokens)
@@ -153,14 +172,16 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     )
     pack_match = not product.pack or has_pack_match(product.pack, candidate_title)
     exact_ean = exact_ean_in_text(product.ean, listing_text)
-    title_match = bool(product_tokens) and title_coverage >= 0.5 and title_score >= 0.48
+    direct_title_match = bool(product_tokens) and title_coverage >= 0.5 and direct_title_score >= 0.48
+    title_match = bool(product_tokens) and (direct_title_match or semantic_title_match)
+    category_only_match = semantic_title_match and not specific_product_tokens and not product.variant and not product.size and not product.pack
 
     if exact_ean:
         tier: Tier = "high"
         reason = "The EAN appears exactly in the Amazon result text."
-    elif title_match and brand_match and variant_match and size_match and pack_match:
+    elif title_match and brand_match and variant_match and size_match and pack_match and not category_only_match:
         tier = "medium"
-        details = ["product title"]
+        details = ["product category" if semantic_title_match and not direct_title_match else "product title"]
         if brand_tokens:
             details.append("brand")
         if variant_tokens:
@@ -172,7 +193,9 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         reason = f"The Amazon title contains the matching {' + '.join(details)}."
     elif title_match and brand_match:
         tier = "low"
-        if product.size and not size_match:
+        if category_only_match:
+            reason = "The product category aligns, but the listing title lacks enough detail to confirm the exact item."
+        elif product.size and not size_match:
             reason = "Brand and product name align, but the size differs or is missing."
         elif product.variant and not variant_match:
             reason = "Brand and product name align, but the variant needs review."
@@ -370,10 +393,13 @@ def read_limited_response(response: requests.Response, maximum_bytes: int) -> by
 
 
 def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
-    global _last_amazon_request_at
+    global _amazon_blocked_until, _last_amazon_request_at
     search_url = f"{AMAZON_ORIGIN}/s?{urllib.parse.urlencode({'k': query})}"
     with _amazon_lock:
-        wait_seconds = AMAZON_MIN_GAP_SECONDS - (time.monotonic() - _last_amazon_request_at)
+        now = time.monotonic()
+        if now < _amazon_blocked_until:
+            raise AmazonBlocked("Amazon is temporarily blocking automated searches. Wait before trying another batch.")
+        wait_seconds = AMAZON_MIN_GAP_SECONDS - (now - _last_amazon_request_at)
         if wait_seconds > 0:
             time.sleep(wait_seconds)
         try:
@@ -387,20 +413,23 @@ def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
                 )
                 _last_amazon_request_at = time.monotonic()
                 if urlparse(response.url).hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
+                    _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
                     raise AmazonBlocked("Amazon redirected the lookup to a security or sign-in page.")
                 html = read_limited_response(response, MAX_PAGE_BYTES)
                 if response.status_code in {403, 429, 503}:
-                    raise AmazonBlocked("Amazon is temporarily blocking automated searches. Try again later or open the search link manually.")
+                    _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                    raise AmazonBlocked("Amazon is temporarily blocking automated searches. Wait before trying another batch.")
                 if response.status_code != 200:
                     raise RuntimeError(f"Amazon UK returned HTTP {response.status_code}.")
+                html_text = html.decode("utf-8", errors="replace")
+                lowered = html_text.lower()
+                if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
+                    _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                    raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The matcher stopped without retrying.")
         except requests.RequestException as error:
             _last_amazon_request_at = time.monotonic()
             raise RuntimeError("The Amazon UK search could not be reached. Try again later.") from error
 
-    html_text = html.decode("utf-8", errors="replace")
-    lowered = html_text.lower()
-    if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
-        raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The matcher stopped without retrying.")
     if "no results for" in lowered or "did not match any products" in lowered:
         return []
     return extract_amazon_candidates(html_text, ean)
@@ -410,9 +439,18 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     queries: list[tuple[str, str]] = []
     if product.ean:
         queries.append(("ean", product.ean))
+
     detailed = clean_title(" ".join(part for part in (product.brand, product.title, product.variant, product.size, product.pack) if part))
-    brand_query = clean_title(" ".join(part for part in (product.brand, product.title) if part))
-    for stage, query in (("detail", detailed), ("brand", brand_query)):
+    category_terms = CATEGORY_DICTIONARY.get(product.category, {}).get("searchTerms", [])[:2]
+    staged_queries: list[tuple[str, str]] = [("detail", detailed)]
+    for term in category_terms:
+        category_query = clean_title(
+            " ".join(part for part in (product.brand, product.title, product.variant, product.size, product.pack, term) if part)
+        )
+        staged_queries.append(("category", category_query))
+    staged_queries.append(("brand", clean_title(" ".join(part for part in (product.brand, product.title) if part))))
+
+    for stage, query in staged_queries:
         if query and all(query.casefold() != existing.casefold() for _, existing in queries):
             queries.append((stage, query[:220]))
     return queries
@@ -502,7 +540,7 @@ def match_product(product: MatchRequest):
             stage_candidates = list(candidates_by_key.values())
             if any(item["tier"] == "high" for item in stage_candidates):
                 break
-            if stage == "detail" and any(item["tier"] == "medium" for item in stage_candidates):
+            if stage in {"detail", "category"} and any(item["tier"] == "medium" for item in stage_candidates):
                 break
     except AmazonBlocked as error:
         return {

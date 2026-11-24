@@ -29,7 +29,7 @@ MAX_CANDIDATES = 8
 MAX_RESULT_CANDIDATES = 5
 MAX_SEARCH_QUERIES = 5
 CATEGORY_DICTIONARY = json.loads(
-    (Path(__file__).resolve().parent.parent / "product_category_terms.json").read_text(encoding="utf-8")
+    (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
 )["categories"]
 
 HEADERS = {

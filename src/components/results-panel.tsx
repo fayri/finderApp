@@ -1,14 +1,26 @@
 "use client";
 
-import { AlertCircle, ArrowUpRight, CheckCircle2, Download, Image as ImageIcon, LoaderCircle, SearchX } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowUpRight,
+  CheckCircle2,
+  Download,
+  Image as ImageIcon,
+  LoaderCircle,
+  RotateCw,
+  SearchX,
+} from "lucide-react";
 import type { LookupProgress, ProductResult } from "@/lib/types";
 
 interface ResultsPanelProps {
   results: ProductResult[];
   hasRun: boolean;
   isRunning: boolean;
+  isRetryingErrors: boolean;
+  retryableErrorCount: number;
   progress: LookupProgress;
   onCancel: () => void;
+  onRetryErrors: () => void;
   onDownloadCsv: () => void;
   onDownloadXlsx: () => void;
 }
@@ -32,8 +44,11 @@ export function ResultsPanel({
   results,
   hasRun,
   isRunning,
+  isRetryingErrors,
+  retryableErrorCount,
   progress,
   onCancel,
+  onRetryErrors,
   onDownloadCsv,
   onDownloadXlsx,
 }: ResultsPanelProps) {
@@ -50,7 +65,19 @@ export function ResultsPanel({
           <h2 id="results-heading">Your results</h2>
         </div>
         {hasRun && results.length > 0 && !isRunning ? (
-          <div className="export-actions">
+          <div className={`export-actions${retryableErrorCount > 0 ? " export-actions-with-retry" : ""}`}>
+            {retryableErrorCount > 0 ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onRetryErrors}
+                aria-label={`Retry ${retryableErrorCount} lookup ${retryableErrorCount === 1 ? "error" : "errors"}`}
+                title="Retry failed lookups"
+              >
+                <RotateCw size={15} aria-hidden="true" />
+                Retry ({retryableErrorCount})
+              </button>
+            ) : null}
             <button type="button" className="secondary-button" onClick={onDownloadCsv}>
               <Download size={16} /> CSV
             </button>
@@ -67,7 +94,7 @@ export function ResultsPanel({
             <div className="progress-title-wrap">
               <span className="progress-spinner" aria-hidden="true"><LoaderCircle size={17} /></span>
               <div>
-                <strong>Checking Regal Sales</strong>
+                <strong>{isRetryingErrors ? "Retrying lookup errors" : "Checking Regal Sales"}</strong>
                 <span>
                   {progress.completed} of {progress.total} EANs checked
                   {progress.currentEan ? ` · ${progress.currentEan}` : ""}

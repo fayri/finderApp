@@ -128,6 +128,7 @@ export function EanWorkbench() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isRetryingErrors, setIsRetryingErrors] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [results, setResults] = useState<ProductResult[]>([]);
@@ -172,39 +173,29 @@ export function EanWorkbench() {
     setErrorMessage("");
   }
 
-  async function startLookup() {
-    if (!source || isRunning) return;
-    setErrorMessage("");
-
-    const validEans = Array.from(
-      new Set(source.rows.map((row) => normalizeEan(row[source.eanColumnIndex] ?? "")).filter(Boolean)),
-    ) as string[];
-    if (!validEans.length) {
-      setErrorMessage("No valid EANs were found in that column. Choose another column or check the file.");
-      return;
-    }
-    if (validEans.length > MAX_UNIQUE_EANS) {
-      setErrorMessage(`This run contains ${validEans.length} unique EANs. Choose a file or column with ${MAX_UNIQUE_EANS} or fewer unique EANs.`);
-      return;
-    }
-
+  async function runLookupBatch(
+    currentSource: ParsedSource,
+    eans: string[],
+    resultsByEan: Map<string, LookupResult>,
+    retryingErrors = false,
+  ) {
     const controller = new AbortController();
     controllerRef.current = controller;
-    const resultsByEan = new Map<string, LookupResult>();
     setHasRun(true);
     setIsRunning(true);
-    setProgress({ completed: 0, total: validEans.length, currentEan: "", cooldownSeconds: 0 });
-    setResults(makeRows(source, resultsByEan, true));
+    setIsRetryingErrors(retryingErrors);
+    setProgress({ completed: 0, total: eans.length, currentEan: "", cooldownSeconds: 0 });
+    setResults(makeRows(currentSource, resultsByEan, true));
 
     try {
-      for (let index = 0; index < validEans.length; index += 1) {
+      for (let index = 0; index < eans.length; index += 1) {
         if (controller.signal.aborted) break;
-        const ean = validEans[index];
-        setProgress({ completed: index, total: validEans.length, currentEan: ean, cooldownSeconds: 0 });
+        const ean = eans[index];
+        setProgress({ completed: index, total: eans.length, currentEan: ean, cooldownSeconds: 0 });
 
         try {
           const result = await lookupEan(ean, controller.signal, (cooldownSeconds) => {
-            setProgress({ completed: index, total: validEans.length, currentEan: ean, cooldownSeconds });
+            setProgress({ completed: index, total: eans.length, currentEan: ean, cooldownSeconds });
           });
           resultsByEan.set(ean, result);
         } catch (error) {
@@ -223,20 +214,79 @@ export function EanWorkbench() {
           setErrorMessage(`Could not check ${ean}: ${detail}`);
         }
 
-        setResults(makeRows(source, resultsByEan, true));
-        setProgress({ completed: index + 1, total: validEans.length, currentEan: "", cooldownSeconds: 0 });
+        setResults(makeRows(currentSource, resultsByEan, true));
+        setProgress({ completed: index + 1, total: eans.length, currentEan: "", cooldownSeconds: 0 });
       }
     } finally {
       setIsRunning(false);
+      setIsRetryingErrors(false);
       controllerRef.current = null;
-      setResults(makeRows(source, resultsByEan, controller.signal.aborted));
+      setResults(makeRows(currentSource, resultsByEan, controller.signal.aborted));
       setProgress((current) => ({ ...current, currentEan: "", cooldownSeconds: 0 }));
     }
+  }
+
+  async function startLookup() {
+    if (!source || isRunning) return;
+    setErrorMessage("");
+
+    const validEans = Array.from(
+      new Set(source.rows.map((row) => normalizeEan(row[source.eanColumnIndex] ?? "")).filter(Boolean)),
+    ) as string[];
+    if (!validEans.length) {
+      setErrorMessage("No valid EANs were found in that column. Choose another column or check the file.");
+      return;
+    }
+    if (validEans.length > MAX_UNIQUE_EANS) {
+      setErrorMessage(`This run contains ${validEans.length} unique EANs. Choose a file or column with ${MAX_UNIQUE_EANS} or fewer unique EANs.`);
+      return;
+    }
+
+    await runLookupBatch(source, validEans, new Map());
+  }
+
+  async function retryLookupErrors() {
+    if (!source || isRunning) return;
+    setErrorMessage("");
+
+    const failedEans = Array.from(
+      new Set(
+        results
+          .filter((result) => result.status === "error")
+          .map((result) => normalizeEan(result.ean))
+          .filter((ean): ean is string => ean !== null),
+      ),
+    );
+    if (!failedEans.length) return;
+
+    const resultsByEan = new Map<string, LookupResult>();
+    for (const result of results) {
+      if (result.status !== "matched" && result.status !== "not-found" && result.status !== "error") continue;
+      resultsByEan.set(result.ean, {
+        ean: result.ean,
+        imageUrl: result.imageUrl,
+        title: result.title,
+        pack: result.pack,
+        size: result.size,
+        productUrl: result.productUrl,
+        status: result.status,
+        note: result.note,
+      });
+    }
+    failedEans.forEach((ean) => resultsByEan.delete(ean));
+
+    await runLookupBatch(source, failedEans, resultsByEan, true);
   }
 
   const uniqueEanCount = source
     ? new Set(source.rows.map((row) => normalizeEan(row[source.eanColumnIndex] ?? "")).filter(Boolean)).size
     : 0;
+  const retryableErrorCount = new Set(
+    results
+      .filter((result) => result.status === "error")
+      .map((result) => normalizeEan(result.ean))
+      .filter((ean): ean is string => ean !== null),
+  ).size;
 
   async function handleDownloadXlsx() {
     try {
@@ -324,8 +374,11 @@ export function EanWorkbench() {
           results={results}
           hasRun={hasRun}
           isRunning={isRunning}
+          isRetryingErrors={isRetryingErrors}
+          retryableErrorCount={retryableErrorCount}
           progress={progress}
           onCancel={() => controllerRef.current?.abort()}
+          onRetryErrors={retryLookupErrors}
           onDownloadCsv={() => downloadCsv(results, uploadedFile?.name)}
           onDownloadXlsx={handleDownloadXlsx}
         />

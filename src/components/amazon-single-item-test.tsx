@@ -3,7 +3,7 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowRight, Clock3, Image as ImageIcon } from "lucide-react";
 import { AmazonMatchCard } from "@/components/amazon-match-card";
-import type { AmazonMatchResponse, AmazonMatchRow } from "@/lib/amazon-types";
+import type { AmazonMatchResponse, AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
 
 interface ImageQueryResponse {
   query?: string;
@@ -106,6 +106,14 @@ export function AmazonSingleItemTest() {
     setResult((current) => (current ? { ...current, decision } : current));
   }
 
+  function updateCandidate(_rowNumber: number, candidate: AmazonSearchCandidate) {
+    setResult((current) =>
+      current
+        ? { ...current, status: candidate.tier, message: candidate.reason, bestCandidate: candidate, decision: null }
+        : current,
+    );
+  }
+
   return (
     <section className="single-item-test" aria-labelledby="single-item-test-title">
       <div className="single-item-test-heading">
@@ -172,7 +180,7 @@ export function AmazonSingleItemTest() {
         <div className="single-item-test-result">
           <p className="single-item-search-phrase"><strong>Search phrase:</strong> {searchPhrase}</p>
           <div className="amazon-results-list">
-            <AmazonMatchCard result={result} onDecision={updateDecision} />
+            <AmazonMatchCard result={result} onDecision={updateDecision} onCandidateSelect={updateCandidate} />
           </div>
         </div>
       ) : null}

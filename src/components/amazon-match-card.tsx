@@ -1,10 +1,11 @@
 import Image from "next/image";
 import { BadgeCheck, Check, ExternalLink, ImageOff, SearchX, ShieldAlert, X } from "lucide-react";
-import type { AmazonMatchRow } from "@/lib/amazon-types";
+import type { AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
 
 interface AmazonMatchCardProps {
   result: AmazonMatchRow;
   onDecision: (rowNumber: number, decision: "confirmed" | "rejected") => void;
+  onCandidateSelect: (rowNumber: number, candidate: AmazonSearchCandidate) => void;
 }
 
 const statusLabels = {
@@ -18,7 +19,7 @@ const statusLabels = {
 } as const;
 
 function amazonSearchUrl(result: AmazonMatchRow): string {
-  const query = [result.ean, result.brand, result.title, result.variant, result.size]
+  const query = [result.ean, result.brand, result.title, result.variant, result.size, result.pack]
     .filter(Boolean)
     .join(" ");
   return `https://www.amazon.co.uk/s?${new URLSearchParams({ k: query })}`;
@@ -39,7 +40,47 @@ function ImageFrame({ src, alt, label }: { src: string; alt: string; label: stri
   );
 }
 
-export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
+function CandidateOption({
+  candidate,
+  selected,
+  onSelect,
+  fallbackSearchUrl,
+}: {
+  candidate: AmazonSearchCandidate;
+  selected: boolean;
+  onSelect: () => void;
+  fallbackSearchUrl: string;
+}) {
+  return (
+    <article className={`amazon-candidate-option${selected ? " is-selected" : ""}`} aria-label={`Amazon listing: ${candidate.title}`}>
+      <ImageFrame
+        src={candidate.imageUrl}
+        alt={`Amazon listing image: ${candidate.title}`}
+        label={selected ? "Selected" : `${candidate.tier} match`}
+      />
+      <p className="amazon-candidate-title" title={candidate.title}>{candidate.title}</p>
+      <p className="amazon-candidate-detail">
+        {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
+      </p>
+      <div className="amazon-candidate-actions">
+        <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
+          Open listing <ExternalLink size={13} aria-hidden="true" />
+        </a>
+        <button
+          type="button"
+          className="secondary-button amazon-select-candidate"
+          onClick={onSelect}
+          aria-label={selected ? `${candidate.title} is selected` : `Use ${candidate.title} as the Amazon match`}
+          aria-pressed={selected}
+        >
+          {selected ? "Selected" : "Use this listing"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: AmazonMatchCardProps) {
   const candidate = result.bestCandidate;
   const isReview = result.status === "medium" || result.status === "low";
   const headingId = result.rowNumber === 0 ? "amazon-single-item-result" : `amazon-row-${result.rowNumber}`;
@@ -63,6 +104,11 @@ export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
           {statusLabels[result.status]}
         </span>
       </div>
+      <div className="amazon-result-links">
+        <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer">
+          View Amazon search results <ExternalLink size={13} aria-hidden="true" />
+        </a>
+      </div>
 
       {result.status === "pending" ? (
         <p className="amazon-result-message">Waiting for its turn in the search queue.</p>
@@ -72,9 +118,6 @@ export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
           <div>
             <strong>No reliable Amazon result found</strong>
             <p>{result.message}</p>
-            <a href={amazonSearchUrl(result)} target="_blank" rel="noreferrer">
-              Search Amazon UK manually <ExternalLink size={13} aria-hidden="true" />
-            </a>
           </div>
         </div>
       ) : result.status === "blocked" || result.status === "error" ? (
@@ -101,14 +144,37 @@ export function AmazonMatchCard({ result, onDecision }: AmazonMatchCardProps) {
               />
               <p className="amazon-compare-title">{candidate.title}</p>
               <p className="amazon-compare-detail">
-                {candidate.price || "Price not found"}
-                {typeof candidate.imageSimilarity === "number" ? ` · ${candidate.imageSimilarity}% pixel similarity` : " · image score unavailable"}
+                {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
+                {typeof candidate.imageSimilarity === "number" ? ` · ${candidate.imageSimilarity}% pixel similarity` : ""}
               </p>
               <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
                 Open listing <ExternalLink size={13} aria-hidden="true" />
               </a>
             </section>
           </div>
+
+          {result.candidates.length > 1 ? (
+            <section className="amazon-candidate-section" aria-label="Similar Amazon listings">
+              <div className="amazon-candidate-heading">
+                <div>
+                  <h4>Closest listings</h4>
+                  <p>Choose the product that looks most like your source item.</p>
+                </div>
+                <span>{result.candidates.length} options</span>
+              </div>
+              <div className="amazon-candidate-grid">
+                {result.candidates.map((option) => (
+                  <CandidateOption
+                    key={option.asin || option.productUrl || option.title}
+                    candidate={option}
+                    selected={candidate.asin === option.asin && candidate.productUrl === option.productUrl && candidate.title === option.title}
+                    fallbackSearchUrl={amazonSearchUrl(result)}
+                    onSelect={() => onCandidateSelect(result.rowNumber, option)}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <div className="amazon-result-bottomline">
             <p className="amazon-match-reason">{candidate.reason}</p>

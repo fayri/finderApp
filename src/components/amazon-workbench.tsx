@@ -76,16 +76,20 @@ function cell(row: string[], index: number | null): string {
   return index === null ? "" : (row[index] ?? "").trim();
 }
 
+function cleanSupplierText(value: string): string {
+  return value.replace(/\^+/g, "").replace(/\s+/g, " ").trim();
+}
+
 function mappedProducts(source: ParsedSource, mapping: ColumnMapping): MappedProduct[] {
   return source.rows.map((row, index) => {
     const rawEan = cell(row, mapping.ean);
     const input: AmazonProductInput = {
       ean: normalizeEan(rawEan) ?? "",
-      title: cell(row, mapping.title).slice(0, 240),
-      brand: cell(row, mapping.brand).slice(0, 120),
-      variant: cell(row, mapping.variant).slice(0, 120),
-      size: cell(row, mapping.size).slice(0, 80),
-      pack: cell(row, mapping.pack).slice(0, 40),
+      title: cleanSupplierText(cell(row, mapping.title)).slice(0, 240),
+      brand: cleanSupplierText(cell(row, mapping.brand)).slice(0, 120),
+      variant: cleanSupplierText(cell(row, mapping.variant)).slice(0, 120),
+      size: cleanSupplierText(cell(row, mapping.size)).slice(0, 80),
+      pack: cleanSupplierText(cell(row, mapping.pack)).slice(0, 40),
       regalImageUrl: cell(row, mapping.image).slice(0, 2048),
     };
     const key = JSON.stringify([
@@ -139,6 +143,7 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
     "Match tier",
     "Review decision",
     "Amazon title",
+    "Amazon ASIN",
     "Amazon price",
     "Image pixel similarity",
     "Amazon URL",
@@ -156,6 +161,7 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
       result.status,
       result.decision ?? "",
       result.bestCandidate?.title ?? "",
+      result.bestCandidate?.asin ?? "",
       result.bestCandidate?.price ?? "",
       result.bestCandidate?.imageSimilarity === null || result.bestCandidate?.imageSimilarity === undefined
         ? ""
@@ -418,6 +424,16 @@ export function AmazonWorkbench() {
     );
   }
 
+  function updateCandidate(rowNumber: number, candidate: NonNullable<AmazonMatchRow["bestCandidate"]>) {
+    setResults((current) =>
+      current.map((result) =>
+        result.rowNumber === rowNumber
+          ? { ...result, status: candidate.tier, message: candidate.reason, bestCandidate: candidate, decision: null }
+          : result,
+      ),
+    );
+  }
+
   const products = source && mapping ? mappedProducts(source, mapping) : [];
   const queueSize = uniqueProducts(products).length;
   const highCount = results.filter((result) => result.status === "high").length;
@@ -557,7 +573,7 @@ export function AmazonWorkbench() {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Only product titles are sent for categorization. Two products are processed at once, while Amazon requests remain globally spaced by at least 3 seconds. CAPTCHA and rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Product titles are categorized, then relevant dictionary terms such as antibacterial, caring, protective, or cleansing are added one at a time when more options are needed. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
@@ -609,7 +625,12 @@ export function AmazonWorkbench() {
             </div>
             <div className="amazon-results-list">
               {results.map((result) => (
-                <AmazonMatchCard key={`${result.rowNumber}-${result.key}`} result={result} onDecision={updateDecision} />
+                <AmazonMatchCard
+                  key={`${result.rowNumber}-${result.key}`}
+                  result={result}
+                  onDecision={updateDecision}
+                  onCandidateSelect={updateCandidate}
+                />
               ))}
             </div>
             <p className="results-disclaimer amazon-disclaimer">

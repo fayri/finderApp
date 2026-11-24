@@ -26,6 +26,8 @@ AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CANDIDATES = 8
+MAX_RESULT_CANDIDATES = 5
+MAX_SEARCH_QUERIES = 5
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent.parent / "product_category_terms.json").read_text(encoding="utf-8")
 )["categories"]
@@ -61,6 +63,12 @@ class MatchRequest(BaseModel):
             raise ValueError("EAN must contain 8 to 14 digits.")
         return compact
 
+    @field_validator("title", "brand", "variant", "size", "pack")
+    @classmethod
+    def clean_supplier_fields(cls, value: str) -> str:
+        cleaned = value.replace("^", "")
+        return " ".join(cleaned.split())
+
 
 class AmazonBlocked(Exception):
     pass
@@ -88,6 +96,7 @@ def clean_title(title: str) -> str:
     """Use the notebook's title cleanup before constructing marketplace searches."""
     cleaned = re.sub(r"\s*\([^)]*\)\s*", " ", title)
     cleaned = re.sub(r"\bTEMU\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\^+", "", cleaned)
     return " ".join(cleaned.split())
 
 
@@ -141,8 +150,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     listing_text = str(candidate.get("cardText", ""))
     candidate_tokens = tokens(candidate_title)
     product_tokens = tokens(clean_title(product.title))
-    brand_tokens = tokens(product.brand)
-    variant_tokens = tokens(product.variant)
+    brand_tokens = tokens(clean_title(product.brand))
+    variant_tokens = tokens(clean_title(product.variant))
 
     overlap = len(product_tokens & candidate_tokens)
     title_coverage = overlap / max(1, len(product_tokens))
@@ -168,18 +177,25 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     size_match = not product.size or (
         expected_measurements.issubset(measurements(candidate_title))
         if expected_measurements
-        else tokens(product.size).issubset(candidate_tokens)
+        else tokens(clean_title(product.size)).issubset(candidate_tokens)
     )
     pack_match = not product.pack or has_pack_match(product.pack, candidate_title)
     exact_ean = exact_ean_in_text(product.ean, listing_text)
     direct_title_match = bool(product_tokens) and title_coverage >= 0.5 and direct_title_score >= 0.48
-    title_match = bool(product_tokens) and (direct_title_match or semantic_title_match)
+    nearby_title_match = (
+        not direct_title_match
+        and not semantic_title_match
+        and bool(product_tokens)
+        and title_coverage >= 0.25
+        and direct_title_score >= 0.25
+    )
+    title_match = bool(product_tokens) and (direct_title_match or semantic_title_match or nearby_title_match)
     category_only_match = semantic_title_match and not specific_product_tokens and not product.variant and not product.size and not product.pack
 
     if exact_ean:
         tier: Tier = "high"
         reason = "The EAN appears exactly in the Amazon result text."
-    elif title_match and brand_match and variant_match and size_match and pack_match and not category_only_match:
+    elif title_match and brand_match and variant_match and size_match and pack_match and not category_only_match and not nearby_title_match:
         tier = "medium"
         details = ["product category" if semantic_title_match and not direct_title_match else "product title"]
         if brand_tokens:
@@ -195,6 +211,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         tier = "low"
         if category_only_match:
             reason = "The product category aligns, but the listing title lacks enough detail to confirm the exact item."
+        elif nearby_title_match:
+            reason = "Some product words align; compare the image and verify the product type and details."
         elif product.size and not size_match:
             reason = "Brand and product name align, but the size differs or is missing."
         elif product.variant and not variant_match:
@@ -294,15 +312,32 @@ def image_from_card(image) -> str:
     return safe_amazon_image_url(source)
 
 
+def asin_from_href(href: str) -> str:
+    parsed = urlparse(urljoin(AMAZON_ORIGIN, href))
+    if parsed.scheme != "https" or parsed.hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
+        return ""
+
+    paths = [parsed.path]
+    query = urllib.parse.parse_qs(parsed.query)
+    for key in ("url", "redirect", "u"):
+        for nested_url in query.get(key, []):
+            paths.append(urlparse(urllib.parse.unquote(nested_url)).path)
+
+    for path in paths:
+        asin_match = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?:[/?]|$)", path, re.IGNORECASE)
+        if asin_match:
+            return asin_match.group(1).upper()
+    return ""
+
+
 def amazon_product_url(href: str, asin: str) -> str:
     parsed = urlparse(urljoin(AMAZON_ORIGIN, href))
     if parsed.scheme != "https" or parsed.hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
         return ""
-    asin_match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:[/?]|$)", parsed.path, re.IGNORECASE)
-    product_id = asin_match.group(1) if asin_match else asin
+    product_id = asin_from_href(href) or asin
     if not product_id or not re.fullmatch(r"[A-Z0-9]{10}", product_id, re.IGNORECASE):
         return ""
-    return f"{AMAZON_ORIGIN}/dp/{product_id}"
+    return f"{AMAZON_ORIGIN}/dp/{product_id.upper()}"
 
 
 def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
@@ -320,7 +355,9 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
         image_url = image_from_card(image_tag)
         link = title_tag.find("a") or product.find("a", href=True)
         href = str(link.get("href", "")) if link else ""
-        asin = str(product.get("data-asin", "")).strip()
+        asin = str(product.get("data-asin", "")).strip().upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+            asin = asin_from_href(href)
         product_url = amazon_product_url(href, asin)
         key = asin or product_url or title
         if not title or not image_url or key in seen:
@@ -359,10 +396,14 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
         if not title:
             continue
         href = str(link.get("href", "")) if link else ""
-        product_url = amazon_product_url(href, "")
+        product = image_tag.find_parent("div", attrs={"data-component-type": "s-search-result"})
+        asin = str(product.get("data-asin", "")).strip().upper() if product else ""
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+            asin = asin_from_href(href)
+        product_url = amazon_product_url(href, asin)
         candidates.append(
             {
-                "asin": "",
+                "asin": asin,
                 "title": title,
                 "imageUrl": image_url,
                 "productUrl": product_url,
@@ -441,18 +482,20 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
         queries.append(("ean", product.ean))
 
     detailed = clean_title(" ".join(part for part in (product.brand, product.title, product.variant, product.size, product.pack) if part))
-    category_terms = CATEGORY_DICTIONARY.get(product.category, {}).get("searchTerms", [])[:2]
+    category = CATEGORY_DICTIONARY.get(product.category, {})
+    category_terms = [*category.get("queryTerms", []), *category.get("searchTerms", [])]
     staged_queries: list[tuple[str, str]] = [("detail", detailed)]
     for term in category_terms:
-        category_query = clean_title(
-            " ".join(part for part in (product.brand, product.title, product.variant, product.size, product.pack, term) if part)
-        )
+        category_query = clean_title(f"{detailed} {term}")
         staged_queries.append(("category", category_query))
-    staged_queries.append(("brand", clean_title(" ".join(part for part in (product.brand, product.title) if part))))
+    if product.brand or product.title:
+        staged_queries.append(("brand", clean_title(" ".join(part for part in (product.brand, product.title) if part))))
 
     for stage, query in staged_queries:
         if query and all(query.casefold() != existing.casefold() for _, existing in queries):
             queries.append((stage, query[:220]))
+        if len(queries) >= MAX_SEARCH_QUERIES:
+            break
     return queries
 
 
@@ -537,10 +580,7 @@ def match_product(product: MatchRequest):
                 if existing is None or candidate_sort_key(classified) > candidate_sort_key(existing):
                     candidates_by_key[key] = classified
 
-            stage_candidates = list(candidates_by_key.values())
-            if any(item["tier"] == "high" for item in stage_candidates):
-                break
-            if stage in {"detail", "category"} and any(item["tier"] == "medium" for item in stage_candidates):
+            if len(candidates_by_key) >= MAX_RESULT_CANDIDATES:
                 break
     except AmazonBlocked as error:
         return {
@@ -548,7 +588,7 @@ def match_product(product: MatchRequest):
             "message": str(error),
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
-            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:5],
+            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:MAX_RESULT_CANDIDATES],
             "searchedQueries": searched_queries,
         }
     except (requests.RequestException, RuntimeError, ValueError) as error:
@@ -557,7 +597,7 @@ def match_product(product: MatchRequest):
             "message": str(error) or "The Amazon UK search could not be completed.",
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
-            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:5],
+            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:MAX_RESULT_CANDIDATES],
             "searchedQueries": searched_queries,
         }
 
@@ -582,6 +622,6 @@ def match_product(product: MatchRequest):
         "message": best["reason"],
         "regalImageUrl": regal_image_url,
         "bestCandidate": best,
-        "candidates": candidates[:5],
+        "candidates": candidates[:MAX_RESULT_CANDIDATES],
         "searchedQueries": searched_queries,
     }

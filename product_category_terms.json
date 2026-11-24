@@ -5,84 +5,96 @@
       "description": "Hand soap, body wash, shower gel, and cleansing bars.",
       "titleHints": ["hand soap", "hand wash", "handwash", "body wash", "shower gel", "cleansing bar", "bath soap", "liquid soap", "soap"],
       "aliases": ["hand soap", "hand wash", "handwash", "body wash", "shower gel", "cleansing bar", "bath soap", "liquid soap", "bar soap", "soap"],
-      "searchTerms": ["handwash", "body wash"]
+      "searchTerms": ["handwash", "body wash"],
+      "queryTerms": ["antibacterial", "caring", "protective", "cleansing"]
     },
     "hair_care": {
       "label": "Hair care",
       "description": "Shampoo, conditioner, hair treatments, and styling products.",
       "titleHints": ["shampoo", "conditioner", "hair mask", "hair oil", "hair serum", "hair spray"],
       "aliases": ["shampoo", "conditioner", "hair mask", "hair oil", "hair serum", "hair spray", "hair treatment"],
-      "searchTerms": ["shampoo", "conditioner"]
+      "searchTerms": ["shampoo", "conditioner"],
+      "queryTerms": ["nourishing", "repairing", "moisturising", "volumising"]
     },
     "skin_care": {
       "label": "Skin care",
       "description": "Face and body moisturizers, lotions, serums, and sunscreen.",
       "titleHints": ["moisturizer", "moisturiser", "face cream", "hand cream", "body lotion", "skin serum", "sunscreen", "sun cream"],
       "aliases": ["moisturizer", "moisturiser", "face cream", "hand cream", "body lotion", "skin serum", "sunscreen", "sun cream", "skin cream", "lotion"],
-      "searchTerms": ["moisturiser", "skin cream"]
+      "searchTerms": ["moisturiser", "skin cream"],
+      "queryTerms": ["hydrating", "nourishing", "protecting", "sensitive"]
     },
     "oral_care": {
       "label": "Oral care",
       "description": "Toothpaste, toothbrushes, mouthwash, and dental accessories.",
       "titleHints": ["toothpaste", "toothbrush", "mouthwash", "dental floss", "oral care"],
       "aliases": ["toothpaste", "toothbrush", "mouthwash", "dental floss", "oral care", "dental care"],
-      "searchTerms": ["toothpaste", "mouthwash"]
+      "searchTerms": ["toothpaste", "mouthwash"],
+      "queryTerms": ["whitening", "sensitive", "fresh", "enamel"]
     },
     "laundry": {
       "label": "Laundry",
       "description": "Laundry detergent, washing powder, fabric softener, and stain removers.",
       "titleHints": ["laundry detergent", "washing powder", "washing liquid", "fabric softener", "stain remover", "laundry"],
       "aliases": ["laundry detergent", "washing powder", "washing liquid", "fabric softener", "stain remover", "laundry", "washing detergent"],
-      "searchTerms": ["laundry detergent", "fabric softener"]
+      "searchTerms": ["laundry detergent", "fabric softener"],
+      "queryTerms": ["concentrated", "stain", "fresh", "colour"]
     },
     "home_cleaning": {
       "label": "Home cleaning",
       "description": "Surface cleaners, dishwashing products, disinfectants, and household cleaning supplies.",
       "titleHints": ["surface cleaner", "dish soap", "dishwashing liquid", "washing up liquid", "disinfectant", "bleach", "floor cleaner", "toilet cleaner", "cleaning spray"],
       "aliases": ["surface cleaner", "dish soap", "dishwashing liquid", "washing up liquid", "disinfectant", "bleach", "floor cleaner", "toilet cleaner", "cleaning spray", "cleaner"],
-      "searchTerms": ["surface cleaner", "dishwashing liquid"]
+      "searchTerms": ["surface cleaner", "dishwashing liquid"],
+      "queryTerms": ["antibacterial", "degreasing", "disinfecting", "scented"]
     },
     "baby_care": {
       "label": "Baby care",
       "description": "Baby wipes, nappies, infant formula, and baby-care essentials.",
       "titleHints": ["baby wipes", "nappy", "nappies", "diaper", "infant formula", "baby"],
       "aliases": ["baby wipes", "nappy", "nappies", "diaper", "infant formula", "baby"],
-      "searchTerms": ["baby", "nappy"]
+      "searchTerms": ["baby", "nappy"],
+      "queryTerms": ["gentle", "sensitive", "unscented", "protecting"]
     },
     "pet_care": {
       "label": "Pet care",
       "description": "Pet food, litter, and products for dogs, cats, and other pets.",
       "titleHints": ["pet food", "dog food", "cat food", "cat litter", "puppy", "kitten", "dog", "cat", "pet"],
       "aliases": ["pet food", "dog food", "cat food", "cat litter", "puppy", "kitten", "dog", "cat", "pet"],
-      "searchTerms": ["pet", "dog"]
+      "searchTerms": ["pet", "dog"],
+      "queryTerms": ["sensitive", "nourishing", "grain-free", "fresh"]
     },
     "food_drink": {
       "label": "Food and drink",
       "description": "Packaged food, snacks, coffee, tea, and beverages.",
       "titleHints": ["snack", "chocolate", "cereal", "coffee", "tea", "soft drink", "juice", "beverage", "food"],
       "aliases": ["snack", "chocolate", "cereal", "coffee", "tea", "soft drink", "juice", "beverage", "food", "drink"],
-      "searchTerms": ["grocery", "snack"]
+      "searchTerms": ["grocery", "snack"],
+      "queryTerms": ["organic", "sugar-free", "protein", "family"]
     },
     "health_wellness": {
       "label": "Health and wellness",
       "description": "Vitamins, supplements, first aid, and general wellness products.",
       "titleHints": ["vitamin", "supplement", "first aid", "pain relief", "bandage", "wellness"],
       "aliases": ["vitamin", "supplement", "first aid", "pain relief", "bandage", "wellness"],
-      "searchTerms": ["health", "vitamin"]
+      "searchTerms": ["health", "vitamin"],
+      "queryTerms": ["immune", "vitamin", "support", "daily"]
     },
     "beauty": {
       "label": "Beauty and cosmetics",
       "description": "Makeup, cosmetics, nail products, and beauty accessories.",
       "titleHints": ["makeup", "mascara", "lipstick", "cosmetic", "nail polish", "beauty"],
       "aliases": ["makeup", "mascara", "lipstick", "cosmetic", "nail polish", "beauty", "cosmetics"],
-      "searchTerms": ["makeup", "cosmetics"]
+      "searchTerms": ["makeup", "cosmetics"],
+      "queryTerms": ["waterproof", "long-lasting", "nourishing", "volumising"]
     },
     "household": {
       "label": "Household",
       "description": "Paper goods, batteries, kitchen supplies, storage, and household essentials.",
       "titleHints": ["kitchen roll", "paper towel", "toilet tissue", "bin bag", "trash bag", "battery", "batteries", "cling film", "air freshener", "household"],
       "aliases": ["kitchen roll", "paper towel", "toilet tissue", "bin bag", "trash bag", "battery", "batteries", "cling film", "air freshener", "household"],
-      "searchTerms": ["household", "home"]
+      "searchTerms": ["household", "home"],
+      "queryTerms": ["large", "multipack", "scented", "reusable"]
     },
     "other": {
       "label": "Other",

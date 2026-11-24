@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AmazonWorkbench } from "@/components/amazon-workbench";
+import { getBuildVersion } from "@/lib/build-version";
 
 export const metadata: Metadata = {
   title: "Amazon product matching — FinderApp",
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function AmazonMatchingPage() {
-  return <AmazonWorkbench />;
+  return <AmazonWorkbench buildVersion={getBuildVersion()} />;
 }

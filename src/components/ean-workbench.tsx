@@ -123,7 +123,7 @@ function makeRows(
   });
 }
 
-export function EanWorkbench() {
+export function EanWorkbench({ buildVersion }: { buildVersion: string }) {
   const [source, setSource] = useState<ParsedSource | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -303,7 +303,7 @@ export function EanWorkbench() {
           <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.3} /></span>
           <span className="brand-name">finder<span>app</span></span>
         </Link>
-        <ToolNavigation active="regal" />
+        <ToolNavigation active="regal" buildVersion={buildVersion} />
       </header>
 
       <section className="hero" aria-labelledby="page-title">

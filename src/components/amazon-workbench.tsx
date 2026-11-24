@@ -214,7 +214,7 @@ function ColumnSelect({
   );
 }
 
-export function AmazonWorkbench() {
+export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const [source, setSource] = useState<ParsedSource | null>(null);
@@ -447,7 +447,7 @@ export function AmazonWorkbench() {
           <span className="brand-mark" aria-hidden="true"><Sparkles size={18} strokeWidth={2.3} /></span>
           <span className="brand-name">finder<span>app</span></span>
         </Link>
-        <ToolNavigation active="amazon" />
+        <ToolNavigation active="amazon" buildVersion={buildVersion} />
       </header>
 
       <section className="hero" aria-labelledby="amazon-page-title">

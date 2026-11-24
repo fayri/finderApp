@@ -6,6 +6,8 @@ export const maxDuration = 30;
 const MAX_REQUEST_BYTES = 8 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TITLE_LENGTH = 240;
+const MAX_SIZE_LENGTH = 80;
+const MAX_PACK_LENGTH = 40;
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/avif",
   "image/gif",
@@ -87,9 +89,15 @@ export async function POST(request: Request) {
     return Response.json({ error: "Send a valid image lookup request." }, { status: 400 });
   }
 
-  const input = payload as { title?: unknown; imageUrl?: unknown };
+  const input = payload as { title?: unknown; imageUrl?: unknown; size?: unknown; pack?: unknown };
   const title = typeof input.title === "string" ? input.title.trim().slice(0, MAX_TITLE_LENGTH) : "";
+  const size = typeof input.size === "string" ? input.size.trim() : "";
+  const pack = typeof input.pack === "string" ? input.pack.trim() : "";
   const imageUrlValue = typeof input.imageUrl === "string" ? input.imageUrl.trim() : "";
+
+  if (size.length > MAX_SIZE_LENGTH || pack.length > MAX_PACK_LENGTH) {
+    return Response.json({ error: "The size or pack detail is too long." }, { status: 400 });
+  }
 
   if (!imageUrlValue) {
     return Response.json({ error: "Add an image URL to analyze." }, { status: 400 });
@@ -158,7 +166,9 @@ export async function POST(request: Request) {
     const text = [
       "Create one concise search phrase for finding this product on Amazon UK.",
       title ? `User-supplied product title: ${title}` : "No product title was supplied.",
-      "Use visible product type, brand, model, and variant details only when they are clear. Preserve the supplied title's important words. Do not guess a brand, size, or variant. Return only the search phrase, with no explanation or quotation marks.",
+      size ? `User-confirmed size: ${size}` : "No size was supplied.",
+      pack ? `User-confirmed pack count: ${pack}` : "No pack count was supplied.",
+      "Use the image and supplied title together to identify likely product search terms. Preserve the title's important words. Keep the supplied size and pack count as confirmation details; never guess or alter them. Return only the search phrase, with no explanation or quotation marks.",
     ].join("\n");
 
     const result = await generateText({

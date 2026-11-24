@@ -10,7 +10,7 @@
   },
   "rewrites": [
     {
-      "source": "/api/amazon/(.*)",
+      "source": "/api/amazon/match",
       "destination": {
         "service": "amazon_matcher"
       }

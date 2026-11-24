@@ -85,6 +85,22 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(queries[0], ("detail", "Northstar Gentle Handwash"))
         self.assertTrue(all("^" not in query for _, query in queries))
 
+    def test_image_terms_supplement_title_size_and_pack_search(self):
+        product = MatchRequest(
+            title="Carex Antibacterial Sensitive Handwash",
+            image_terms="Carex purple pump bottle sensitive hand soap",
+            size="250ml",
+            pack="1",
+        )
+
+        queries = build_search_queries(product)
+
+        image_query = next(query for stage, query in queries if stage == "image")
+        self.assertIn("Carex Antibacterial Sensitive Handwash", image_query)
+        self.assertIn("purple pump bottle", image_query)
+        self.assertIn("250ml", image_query)
+        self.assertIn("1", image_query)
+
     def test_size_uncertainty_is_low_match(self):
         product = MatchRequest(title="Hydrating Hand Cream", brand="Northstar", size="250 ml")
         candidate = {

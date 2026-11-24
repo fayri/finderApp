@@ -1969,6 +1969,38 @@ label:focus-visible {
   margin: 11px 0 0;
 }
 
+.single-item-browser-search {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 11px;
+  padding: 9px 11px;
+  border: 1px solid #dbe8e1;
+  border-radius: 8px;
+  background: #f7faf8;
+  color: var(--navy);
+  font-size: 10px;
+}
+
+.single-item-browser-search a {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+  font-size: 10px;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.single-item-browser-search code {
+  color: #64718a;
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 @media (max-width: 560px) {
   .single-item-test {
     padding: 14px 12px;

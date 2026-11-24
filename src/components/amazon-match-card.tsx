@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { BadgeCheck, Check, ExternalLink, ImageOff, SearchX, ShieldAlert, X } from "lucide-react";
 import type { AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
+import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
 
 interface AmazonMatchCardProps {
   result: AmazonMatchRow;
@@ -22,14 +23,30 @@ function amazonSearchUrl(result: AmazonMatchRow): string {
   const query = [result.ean, result.brand, result.title, result.variant, result.size, result.pack]
     .filter(Boolean)
     .join(" ");
-  return `https://www.amazon.co.uk/s?${new URLSearchParams({ k: query })}`;
+  return buildAmazonSearchUrl(query);
+}
+
+function imageSource(src: string): string {
+  try {
+    const url = new URL(src);
+    if (
+      url.protocol === "https:" &&
+      ["regalsales.co.uk", "www.regalsales.co.uk"].includes(url.hostname) &&
+      url.pathname.startsWith("/product/image/")
+    ) {
+      return `/api/amazon/source-image?url=${encodeURIComponent(url.toString())}`;
+    }
+  } catch {
+    return src;
+  }
+  return src;
 }
 
 function ImageFrame({ src, alt, label }: { src: string; alt: string; label: string }) {
   return (
     <div className="amazon-image-frame">
       {src ? (
-        <Image src={src} alt={alt} width={420} height={420} sizes="(max-width: 560px) 100vw, 50vw" unoptimized />
+        <Image src={imageSource(src)} alt={alt} width={420} height={420} sizes="(max-width: 560px) 100vw, 50vw" unoptimized />
       ) : (
         <span className="amazon-image-empty" aria-label="No image available">
           <ImageOff size={19} aria-hidden="true" />
@@ -106,7 +123,7 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
       </div>
       <div className="amazon-result-links">
         <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer">
-          View Amazon search results <ExternalLink size={13} aria-hidden="true" />
+          Search Amazon UK in browser <ExternalLink size={13} aria-hidden="true" />
         </a>
       </div>
 

@@ -27,6 +27,7 @@ import type {
 } from "@/lib/amazon-types";
 import type { ParsedSource } from "@/lib/types";
 import { fallbackCategory } from "@/lib/amazon-categories";
+import { getApiErrorMessage } from "@/lib/amazon-api-errors";
 import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 
 const MAX_PRODUCTS_PER_RUN = 100;
@@ -333,14 +334,10 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               }),
               signal: controller.signal,
             });
-            const payload = (await response.json().catch(() => null)) as AmazonMatchResponse | { error?: string; detail?: string } | null;
+            const payload = await response.json().catch(() => null);
             if (controller.signal.aborted) return;
-            if (!response.ok || !payload || !("status" in payload)) {
-              throw new Error(
-                (payload && "error" in payload && payload.error) ||
-                  (payload && "detail" in payload && payload.detail) ||
-                  "The Amazon lookup could not be completed.",
-              );
+            if (!response.ok || !payload || typeof payload !== "object" || !("status" in payload)) {
+              throw new Error(getApiErrorMessage(payload, "The Amazon matcher did not return product results.", response.status));
             }
 
             const matchPayload = payload as AmazonMatchResponse;
@@ -367,7 +364,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             const rowResult: AmazonMatchRow = {
               ...product,
               status: "error",
-              message: error instanceof Error ? error.message : "The Amazon lookup failed.",
+              message:
+                error instanceof TypeError && error.message === "Failed to fetch"
+                  ? "Could not reach the Amazon matcher. Use the Amazon UK search link on this row to check it manually."
+                  : error instanceof Error
+                    ? error.message
+                    : "The Amazon lookup failed. Open the Amazon UK search link to review this product.",
               regalImageUrl: product.regalImageUrl,
               bestCandidate: null,
               candidates: [],

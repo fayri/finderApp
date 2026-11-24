@@ -48,6 +48,7 @@ class MatchRequest(BaseModel):
 
     ean: str = Field(default="", max_length=14)
     title: str = Field(default="", max_length=240)
+    image_terms: str = Field(default="", max_length=240)
     brand: str = Field(default="", max_length=120)
     variant: str = Field(default="", max_length=120)
     size: str = Field(default="", max_length=80)
@@ -63,7 +64,7 @@ class MatchRequest(BaseModel):
             raise ValueError("EAN must contain 8 to 14 digits.")
         return compact
 
-    @field_validator("title", "brand", "variant", "size", "pack")
+    @field_validator("title", "image_terms", "brand", "variant", "size", "pack")
     @classmethod
     def clean_supplier_fields(cls, value: str) -> str:
         cleaned = value.replace("^", "")
@@ -485,6 +486,9 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     category = CATEGORY_DICTIONARY.get(product.category, {})
     category_terms = [*category.get("queryTerms", []), *category.get("searchTerms", [])]
     staged_queries: list[tuple[str, str]] = [("detail", detailed)]
+    if product.image_terms:
+        image_query = clean_title(" ".join(part for part in (product.title, product.image_terms, product.size, product.pack) if part))
+        staged_queries.append(("image", image_query))
     for term in category_terms:
         category_query = clean_title(f"{detailed} {term}")
         staged_queries.append(("category", category_query))
@@ -605,23 +609,26 @@ def match_product(product: MatchRequest):
     if not candidates:
         return {
             "status": "not-found",
-            "message": "No Amazon UK result matched the EAN, product title, brand, variant, and size criteria.",
+            "message": "No Amazon UK result matched the EAN, product title, brand, variant, size, and pack details.",
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": [],
             "searchedQueries": searched_queries,
         }
 
-    best = candidates[0]
     regal_image = download_image(regal_image_url, "regal") if regal_image_url else None
-    amazon_image = download_image(str(best.get("imageUrl", "")), "amazon")
-    best["imageSimilarity"] = calculate_image_similarity(regal_image, amazon_image)
+    visible_candidates = candidates[:MAX_RESULT_CANDIDATES]
+    for candidate in visible_candidates:
+        amazon_image = download_image(str(candidate.get("imageUrl", "")), "amazon") if regal_image else None
+        candidate["imageSimilarity"] = calculate_image_similarity(regal_image, amazon_image)
+    visible_candidates.sort(key=candidate_sort_key, reverse=True)
+    best = visible_candidates[0]
 
     return {
         "status": best["tier"],
         "message": best["reason"],
         "regalImageUrl": regal_image_url,
         "bestCandidate": best,
-        "candidates": candidates[:MAX_RESULT_CANDIDATES],
+        "candidates": visible_candidates,
         "searchedQueries": searched_queries,
     }

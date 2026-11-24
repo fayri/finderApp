@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowRight, Clock3, Image as ImageIcon } from "lucide-react";
+import { ArrowRight, Clock3, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { AmazonMatchCard } from "@/components/amazon-match-card";
+import { getApiErrorMessage } from "@/lib/amazon-api-errors";
+import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
 import type { AmazonMatchResponse, AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
 
 interface ImageQueryResponse {
@@ -10,92 +12,118 @@ interface ImageQueryResponse {
   error?: string;
 }
 
-function responseError(payload: { error?: string; detail?: string; message?: string } | null, fallback: string): string {
-  return payload?.error || payload?.detail || payload?.message || fallback;
-}
-
 export function AmazonSingleItemTest() {
   const [title, setTitle] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [size, setSize] = useState("");
+  const [pack, setPack] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [stage, setStage] = useState<"image" | "search" | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchPhrase, setSearchPhrase] = useState("");
+  const [searchUrl, setSearchUrl] = useState("");
   const [result, setResult] = useState<AmazonMatchRow | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const productTitle = title.trim();
     const productImageUrl = imageUrl.trim();
+    const productSize = size.trim();
+    const productPack = pack.trim();
 
     if (!productTitle && !productImageUrl) {
+      setSearchUrl("");
       setErrorMessage("Add a product title, an image URL, or both to run a test.");
       return;
     }
 
+    const initialSearchQuery = [productTitle, productSize, productPack].filter(Boolean).join(" ");
+    setSearchUrl(initialSearchQuery ? buildAmazonSearchUrl(initialSearchQuery) : "");
     setErrorMessage("");
     setResult(null);
     setSearchPhrase("");
     setIsRunning(true);
 
     try {
-      let query = productTitle;
+      let imageTerms = "";
+      let imageAnalysisWarning = "";
       if (productImageUrl) {
         setStage("image");
         const imageResponse = await fetch("/api/amazon/image-query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: productTitle, imageUrl: productImageUrl }),
+          body: JSON.stringify({ title: productTitle, size: productSize, pack: productPack, imageUrl: productImageUrl }),
         });
         const imagePayload = (await imageResponse.json().catch(() => null)) as ImageQueryResponse | null;
         if (!imageResponse.ok || !imagePayload?.query) {
-          throw new Error(responseError(imagePayload, "The image could not be analyzed."));
+          const imageError = getApiErrorMessage(imagePayload, "Image analysis is unavailable.", imageResponse.status);
+          if (!productTitle) {
+            throw new Error(`${imageError}. Add a title to create an Amazon UK search URL.`);
+          }
+          imageAnalysisWarning = `Image analysis was unavailable (${imageError}); the title, size, and pack were still searched.`;
+        } else {
+          imageTerms = imagePayload.query.trim();
         }
-        query = imagePayload.query;
       }
 
-      setSearchPhrase(query);
+      const searchTitle = productTitle || imageTerms;
+      if (!searchTitle) {
+        throw new Error("The image did not provide searchable product details. Add the product title to continue.");
+      }
+
+      const primarySearchQuery = [searchTitle, productSize, productPack].filter(Boolean).join(" ");
+      setSearchPhrase(
+        imageTerms && productTitle ? `${primarySearchQuery} · Image details: ${imageTerms}` : primarySearchQuery,
+      );
+      setSearchUrl(buildAmazonSearchUrl(primarySearchQuery));
       setStage("search");
       const matchResponse = await fetch("/api/amazon/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ean: "",
-          title: query,
+          title: searchTitle,
+          image_terms: productTitle ? imageTerms : "",
           brand: "",
           variant: "",
-          size: "",
-          pack: "",
-          regal_image_url: "",
+          size: productSize,
+          pack: productPack,
+          category: "",
+          regal_image_url: productImageUrl,
         }),
       });
-      const matchPayload = (await matchResponse.json().catch(() => null)) as
-        | AmazonMatchResponse
-        | { error?: string; detail?: string }
-        | null;
-      if (!matchResponse.ok || !matchPayload || !("status" in matchPayload)) {
-        throw new Error(responseError(matchPayload, "The Amazon lookup could not be completed."));
+      const matchPayload = await matchResponse.json().catch(() => null);
+      if (!matchResponse.ok || !matchPayload || typeof matchPayload !== "object" || !("status" in matchPayload)) {
+        throw new Error(
+          getApiErrorMessage(matchPayload, "The Amazon matcher did not return product results.", matchResponse.status),
+        );
       }
 
       const match = matchPayload as AmazonMatchResponse;
       setResult({
         ean: "",
-        title: productTitle || query,
+        title: productTitle || searchTitle,
         brand: "",
         variant: "",
-        size: "",
-        pack: "",
-        regalImageUrl: productImageUrl,
+        size: productSize,
+        pack: productPack,
+        regalImageUrl: match.regalImageUrl || productImageUrl,
         rowNumber: 0,
         key: "single-item-test",
         status: match.status,
-        message: match.message,
+        message: imageAnalysisWarning ? `${match.message} ${imageAnalysisWarning}` : match.message,
         bestCandidate: match.bestCandidate,
         candidates: match.candidates ?? [],
         decision: null,
       });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "The single-item test could not be completed.");
+      setErrorMessage(
+        error instanceof TypeError && error.message === "Failed to fetch"
+          ? "Could not reach the Amazon matcher. Use the Amazon UK search URL below to review this item."
+          : error instanceof Error
+            ? error.message
+            : "The single-item test could not be completed. Use the Amazon UK search URL below to review this item.",
+      );
     } finally {
       setIsRunning(false);
       setStage(null);
@@ -121,7 +149,7 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            Enter a title, an image URL, or both. An image is analyzed to build a focused Amazon UK search phrase.
+            Search with the product title and image together, then use pack and size to confirm the Amazon UK candidate.
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>
@@ -145,8 +173,11 @@ export function AmazonSingleItemTest() {
               autoComplete="off"
               maxLength={240}
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="e.g. stainless steel water bottle"
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setSearchUrl("");
+              }}
+              placeholder="e.g. Carex sensitive handwash"
               disabled={isRunning}
             />
           </label>
@@ -157,16 +188,49 @@ export function AmazonSingleItemTest() {
               type="url"
               maxLength={2048}
               value={imageUrl}
-              onChange={(event) => setImageUrl(event.target.value)}
+              onChange={(event) => {
+                setImageUrl(event.target.value);
+                setSearchUrl("");
+              }}
               placeholder="https://example.com/product.jpg"
               aria-describedby="single-item-image-note"
+              disabled={isRunning}
+            />
+          </label>
+          <label className="single-item-test-field" htmlFor="single-item-size">
+            <span>Size <small>optional</small></span>
+            <input
+              id="single-item-size"
+              type="text"
+              maxLength={80}
+              value={size}
+              onChange={(event) => {
+                setSize(event.target.value);
+                setSearchUrl("");
+              }}
+              placeholder="e.g. 250ml"
+              disabled={isRunning}
+            />
+          </label>
+          <label className="single-item-test-field" htmlFor="single-item-pack">
+            <span>Pack <small>optional</small></span>
+            <input
+              id="single-item-pack"
+              type="text"
+              maxLength={40}
+              value={pack}
+              onChange={(event) => {
+                setPack(event.target.value);
+                setSearchUrl("");
+              }}
+              placeholder="e.g. 1 or 6"
               disabled={isRunning}
             />
           </label>
         </div>
         <div className="single-item-test-actions">
           <p id="single-item-image-note" className="single-item-test-note">
-            Images must be public HTTPS links and 5 MB or smaller. Image-only tests use AI vision to identify search terms.
+            Images must be public HTTPS links and 5 MB or smaller. The image adds search details; size and pack are checked against the listing.
           </p>
           <button type="submit" className="primary-button single-item-test-button" disabled={isRunning}>
             {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}
@@ -175,7 +239,16 @@ export function AmazonSingleItemTest() {
       </form>
 
       {errorMessage ? <p className="inline-error" role="alert">{errorMessage}</p> : null}
-      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building a search phrase from the image…" : "Searching Amazon UK…"}</p> : null}
+      {searchUrl ? (
+        <div className="single-item-browser-search">
+          <strong>Search manually on Amazon UK</strong>
+          <a href={searchUrl} target="_blank" rel="noopener noreferrer">
+            Open Amazon UK search results <ExternalLink size={12} aria-hidden="true" />
+          </a>
+          <code>{searchUrl}</code>
+        </div>
+      ) : null}
+      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building search details from the image…" : "Searching Amazon UK…"}</p> : null}
       {result ? (
         <div className="single-item-test-result">
           <p className="single-item-search-phrase"><strong>Search phrase:</strong> {searchPhrase}</p>

@@ -26,53 +26,11 @@ import type {
   AmazonProductInput,
 } from "@/lib/amazon-types";
 import type { ParsedSource } from "@/lib/types";
-import { fallbackCategory, isProductCategoryId, type ProductCategoryId } from "@/lib/amazon-categories";
+import { fallbackCategory } from "@/lib/amazon-categories";
 import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 
 const MAX_PRODUCTS_PER_RUN = 100;
 const MAX_CONCURRENT_PRODUCTS = 2;
-
-async function prepareCategories(titles: string[], signal: AbortSignal) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await fetch("/api/amazon/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ titles }),
-        signal,
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { categoryIds?: unknown[]; usedFallback?: boolean }
-        | null;
-      const categoryIds = payload?.categoryIds;
-
-      if (
-        response.ok &&
-        Array.isArray(categoryIds) &&
-        categoryIds.length === titles.length &&
-        categoryIds.every(isProductCategoryId)
-      ) {
-        return {
-          categoryIds,
-          usedFallback: Boolean(payload?.usedFallback),
-          serviceUnavailable: false,
-        };
-      }
-
-      if (response.status < 500 && response.status !== 429) break;
-    } catch (error) {
-      if (signal.aborted) throw error;
-    }
-
-    if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 350));
-  }
-
-  return {
-    categoryIds: titles.map(fallbackCategory) as ProductCategoryId[],
-    usedFallback: true,
-    serviceUnavailable: true,
-  };
-}
 
 interface ColumnMapping {
   ean: number;
@@ -267,14 +225,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const [isRunning, setIsRunning] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [categoryNotice, setCategoryNotice] = useState("");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [results, setResults] = useState<AmazonMatchRow[]>([]);
   const [progress, setProgress] = useState<AmazonProgress>(initialProgress);
 
   async function handleFile(file: File) {
     setErrorMessage("");
-    setCategoryNotice("");
     setResults([]);
     setHasRun(false);
     setSource(null);
@@ -303,7 +259,6 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     setResults([]);
     setHasRun(false);
     setErrorMessage("");
-    setCategoryNotice("");
     setProgress(initialProgress);
   }
 
@@ -314,13 +269,11 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     setResults([]);
     setHasRun(false);
     setErrorMessage("");
-    setCategoryNotice("");
   }
 
   async function startMatching() {
     if (!source || !mapping || isRunning) return;
     setErrorMessage("");
-    setCategoryNotice("");
     const products = mappedProducts(source, mapping);
     const queue = uniqueProducts(products);
     if (!queue.length) {
@@ -344,19 +297,10 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     setProgress({ completed: 0, total: queue.length, activeProducts: [] });
 
     try {
-      const categoryResult = await prepareCategories(
-        queue.map((product) => product.title),
-        controller.signal,
-      );
-      const categorizedQueue = queue.map((product, index) => ({
+      const searchQueue = queue.map((product) => ({
         ...product,
-        category: categoryResult.categoryIds[index] ?? fallbackCategory(product.title),
+        category: fallbackCategory(product.title),
       }));
-      if (categoryResult.serviceUnavailable) {
-        setCategoryNotice("The category service was temporarily unavailable; title-based categories were used and matching continued.");
-      } else if (categoryResult.usedFallback) {
-        setCategoryNotice("AI categorization was unavailable; title-keyword categories were used instead.");
-      }
 
       let nextIndex = 0;
       let stopAfterBlock = false;
@@ -364,9 +308,9 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
       async function runWorker() {
         while (!controller.signal.aborted && !stopAfterBlock) {
           const index = nextIndex++;
-          if (index >= categorizedQueue.length) return;
+          if (index >= searchQueue.length) return;
 
-          const product = categorizedQueue[index];
+          const product = searchQueue[index];
           let completedProduct = false;
           setProgress((current) => ({
             ...current,
@@ -443,11 +387,11 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
       }
 
       await Promise.all(
-        Array.from({ length: Math.min(MAX_CONCURRENT_PRODUCTS, categorizedQueue.length) }, () => runWorker()),
+        Array.from({ length: Math.min(MAX_CONCURRENT_PRODUCTS, searchQueue.length) }, () => runWorker()),
       );
     } catch (error) {
       if (!controller.signal.aborted) {
-        setErrorMessage(error instanceof Error ? error.message : "Product categories could not be prepared. Try again.");
+        setErrorMessage(error instanceof Error ? error.message : "The matching run could not be completed. Try again.");
       }
     } finally {
       setIsRunning(false);
@@ -612,7 +556,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Product titles are categorized, then relevant dictionary terms such as antibacterial, caring, protective, or cleansing are added one at a time when more options are needed. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Product titles are matched locally against the bundled category dictionary; unclear titles use the general category. Relevant dictionary terms such as antibacterial, caring, protective, or cleansing are added to Amazon searches when more options are needed. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
@@ -620,7 +564,6 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             {!isRunning ? <ArrowRight size={17} /> : null}
           </button>
         </div>
-        {categoryNotice ? <p className="run-estimate" role="status">{categoryNotice}</p> : null}
         {source && queueSize > 0 ? (
           <p className="run-estimate">{queueSize} unique {queueSize === 1 ? "product" : "products"} · duplicate rows share a result · up to five Amazon searches per product</p>
         ) : null}
@@ -632,7 +575,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                 <span className="progress-spinner"><Clock3 size={15} /></span>
                 <div>
                   <strong>Searching Amazon UK</strong>
-                  <span>{progress.activeProducts.length ? `Processing ${progress.activeProducts.length} ${progress.activeProducts.length === 1 ? "product" : "products"} in parallel` : "Categorizing product titles before search"}</span>
+                  <span>{progress.activeProducts.length ? `Processing ${progress.activeProducts.length} ${progress.activeProducts.length === 1 ? "product" : "products"} in parallel` : "Preparing Amazon search queries"}</span>
                 </div>
               </div>
               <button type="button" className="text-button" onClick={() => controllerRef.current?.abort()}>Stop</button>

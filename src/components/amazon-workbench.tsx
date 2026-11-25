@@ -54,7 +54,7 @@ interface MappedProduct extends AmazonProductInput {
 interface AmazonProgress {
   completed: number;
   total: number;
-  activeProducts: Array<{ key: string; title: string; stage: "label" | "search" }>;
+  activeProducts: Array<{ key: string; title: string; stage: "label" | "search" | "visual" }>;
 }
 
 const initialProgress: AmazonProgress = { completed: 0, total: 0, activeProducts: [] };
@@ -289,6 +289,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [results, setResults] = useState<AmazonMatchRow[]>([]);
   const [progress, setProgress] = useState<AmazonProgress>(initialProgress);
+  const [retryingVisualRow, setRetryingVisualRow] = useState<number | null>(null);
 
   async function handleFile(file: File) {
     setErrorMessage("");
@@ -321,6 +322,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     setHasRun(false);
     setErrorMessage("");
     setProgress(initialProgress);
+    setRetryingVisualRow(null);
   }
 
   function updateMapping(field: keyof ColumnMapping, value: number | null) {
@@ -415,6 +417,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             }
 
             const matchPayload = payload as AmazonMatchResponse;
+            setProgress((current) => ({
+              ...current,
+              activeProducts: current.activeProducts.map((activeProduct) =>
+                activeProduct.key === product.key ? { ...activeProduct, stage: "visual" } : activeProduct,
+              ),
+            }));
             const verifiedMatch = await verifyAmazonCandidates(matchProduct, matchPayload, controller.signal);
             if (controller.signal.aborted) return;
             const rowResult: AmazonMatchRow = {
@@ -479,6 +487,41 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     }
   }
 
+  async function retryVisualMatch(rowNumber: number) {
+    if (retryingVisualRow !== null) return;
+    const sourceProduct = results.find((result) => result.rowNumber === rowNumber);
+    if (!sourceProduct?.regalImageUrl || !sourceProduct.candidates.length) return;
+
+    setRetryingVisualRow(rowNumber);
+    try {
+      const response: AmazonMatchResponse = {
+        status: "low",
+        message: "Retrying the required visual comparison.",
+        regalImageUrl: sourceProduct.regalImageUrl,
+        bestCandidate: null,
+        candidates: sourceProduct.candidates,
+        searchedQueries: [],
+      };
+      const verified = await verifyAmazonCandidates(sourceProduct, response);
+      setResults((current) => current.map((result) =>
+        result.key === sourceProduct.key
+          ? {
+              ...result,
+              status: verified.status,
+              message: verified.message,
+              bestCandidate: verified.bestCandidate,
+              candidates: verified.candidates,
+              decision: null,
+            }
+          : result,
+      ));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? `Image check could not be retried: ${error.message}` : "Image check could not be retried.");
+    } finally {
+      setRetryingVisualRow(null);
+    }
+  }
+
   function updateDecision(rowNumber: number, decision: "confirmed" | "rejected") {
     setResults((current) =>
       current.map((result) => (result.rowNumber === rowNumber ? { ...result, decision } : result)),
@@ -519,9 +562,11 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const notFoundCount = results.filter((result) => result.status === "not-found").length;
   const activeLabelCount = progress.activeProducts.filter((product) => product.stage === "label").length;
   const activeSearchCount = progress.activeProducts.filter((product) => product.stage === "search").length;
+  const activeVisualCount = progress.activeProducts.filter((product) => product.stage === "visual").length;
   const activeProgressLabel = [
     activeLabelCount ? `Reading labels for ${activeLabelCount}` : "",
     activeSearchCount ? `Searching Amazon for ${activeSearchCount}` : "",
+    activeVisualCount ? `Comparing images for ${activeVisualCount}` : "",
   ].filter(Boolean).join(" · ");
 
   return (
@@ -714,6 +759,9 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                   onDecision={updateDecision}
                   onCandidateSelect={updateCandidate}
                   onCandidateDetails={updateCandidateDetails}
+                  onRetryVisual={retryVisualMatch}
+                  isVisualRetrying={retryingVisualRow === result.rowNumber}
+                  isVisualRetryBusy={retryingVisualRow !== null}
                 />
               ))}
             </div>

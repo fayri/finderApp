@@ -19,7 +19,8 @@ export function AmazonSingleItemTest() {
   const [size, setSize] = useState("");
   const [pack, setPack] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [stage, setStage] = useState<"image" | "search" | null>(null);
+  const [stage, setStage] = useState<"image" | "search" | "visual" | null>(null);
+  const [isRetryingVisual, setIsRetryingVisual] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchPhrase, setSearchPhrase] = useState("");
   const [searchUrl, setSearchUrl] = useState("");
@@ -112,6 +113,7 @@ export function AmazonSingleItemTest() {
         regalImageUrl: productImageUrl,
         imageTerms,
       };
+      setStage("visual");
       const verifiedMatch = await verifyAmazonCandidates(sourceProduct, match);
       setResult({
         ...sourceProduct,
@@ -171,6 +173,32 @@ export function AmazonSingleItemTest() {
     });
   }
 
+  async function retryVisualMatch() {
+    if (!result?.regalImageUrl || !result.candidates.length || isRetryingVisual) return;
+    setIsRetryingVisual(true);
+    try {
+      const response: AmazonMatchResponse = {
+        status: "low",
+        message: "Retrying the required visual comparison.",
+        regalImageUrl: result.regalImageUrl,
+        bestCandidate: null,
+        candidates: result.candidates,
+        searchedQueries: [],
+      };
+      const verified = await verifyAmazonCandidates(result, response);
+      setResult((current) => current ? {
+        ...current,
+        status: verified.status,
+        message: verified.message,
+        bestCandidate: verified.bestCandidate,
+        candidates: verified.candidates,
+        decision: null,
+      } : current);
+    } finally {
+      setIsRetryingVisual(false);
+    }
+  }
+
   return (
     <section className="single-item-test" aria-labelledby="single-item-test-title">
       <div className="single-item-test-heading">
@@ -178,7 +206,7 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            Title and image matches are scored independently. Load the Amazon listing&apos;s full title, seller, and current page price, then check size and pack before confirming.
+            Title and image matches are scored independently. Read the Amazon page&apos;s title, shipper / seller, and current price, then review the size and pack checks before confirming.
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>
@@ -262,7 +290,7 @@ export function AmazonSingleItemTest() {
             Images must be public HTTPS links and 5 MB or smaller. Readable label text is added to the title search; size and pack are checked against the listing.
           </p>
           <button type="submit" className="primary-button single-item-test-button" disabled={isRunning}>
-            {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}
+            {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : stage === "visual" ? "Comparing product images…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}
           </button>
         </div>
       </form>
@@ -277,7 +305,7 @@ export function AmazonSingleItemTest() {
           <code>{searchUrl}</code>
         </div>
       ) : null}
-      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building search details from the image…" : "Searching Amazon UK…"}</p> : null}
+      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building search details from the image…" : stage === "visual" ? "Comparing the source image with Amazon images…" : "Searching Amazon UK…"}</p> : null}
       {result ? (
         <div className="single-item-test-result">
           <p className="single-item-search-phrase"><strong>Search phrase:</strong> {searchPhrase}</p>
@@ -287,6 +315,9 @@ export function AmazonSingleItemTest() {
             onDecision={updateDecision}
             onCandidateSelect={updateCandidate}
             onCandidateDetails={updateCandidateDetails}
+            onRetryVisual={retryVisualMatch}
+            isVisualRetrying={isRetryingVisual}
+            isVisualRetryBusy={isRetryingVisual}
           />
           </div>
         </div>

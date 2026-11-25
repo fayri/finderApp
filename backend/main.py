@@ -118,7 +118,7 @@ def normalize_text(value: str) -> str:
 
 def extract_seller_name(value: str) -> str:
     match = re.search(
-        r"\b(?:sold\s+by|seller)\s*:?\s*(.+?)(?=\s+(?:(?:and\s+)?(?:ships?|dispatches?|dispatched)\s+(?:from|by)|returns?|conditions?)\b|\s*[|]|$)",
+        r"\b(?:shipper\s*/\s*seller|sold\s+by|seller)\s*:?\s*(.+?)(?=\s+(?:(?:and\s+)?(?:ships?|dispatches?|dispatched)\s+(?:from|by)|returns?|conditions?)\b|\s*[|]|$)",
         value,
         re.IGNORECASE,
     )
@@ -399,10 +399,25 @@ def extract_amazon_product_details(html: str) -> dict[str, str]:
         merchant_text = normalize_text(merchant_tag.get_text(" ", strip=True)) if merchant_tag else ""
         seller = extract_seller_name(merchant_text)
 
+    if not seller:
+        for selector in (
+            "#tabular-buybox .tabular-buybox-text",
+            "#tabular-buybox",
+            "#desktop_buybox",
+            "#buybox",
+        ):
+            for merchant_row in soup.select(selector):
+                seller = extract_seller_name(normalize_text(merchant_row.get_text(" ", strip=True)))
+                if seller:
+                    break
+            if seller:
+                break
+
     price = ""
     for selector in (
         "#corePriceDisplay_desktop_feature_div .a-offscreen",
         "#corePrice_feature_div .a-offscreen",
+        "#tabular-buybox .a-offscreen",
         "#price_inside_buybox",
         "#priceblock_ourprice",
         "#priceblock_dealprice",

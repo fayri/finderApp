@@ -178,12 +178,12 @@ const requestOriginIsSameSite = (request: Request): boolean => {
   }
 };
 
-function unavailableEvaluations(candidates: CandidateInput[]) {
+function unavailableEvaluations(candidates: CandidateInput[], reason: string) {
   return candidates.map((_, index) => ({
     index,
     verdict: "uncertain" as const,
     imageMatchScore: null,
-    reason: "Visual comparison is unavailable; this candidate cannot be automatically confirmed without image evidence.",
+    reason,
   }));
 }
 
@@ -239,10 +239,25 @@ export async function POST(request: Request) {
     return Response.json({ evaluations: [] }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const fallback = unavailableEvaluations(candidates);
-  const sourceImage = sourceImageUrl ? await fetchImage(sourceImageUrl, "source") : null;
+  const fallback = unavailableEvaluations(
+    candidates,
+    "The AI visual comparison did not return a score. Retry the image check; this listing cannot be confirmed without visual evidence.",
+  );
+  if (!sourceImageUrl) {
+    const evaluations = unavailableEvaluations(
+      candidates,
+      "A supplier image URL is required. Add or map a public image before this listing can be confirmed.",
+    );
+    return Response.json({ evaluations }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  const sourceImage = await fetchImage(sourceImageUrl, "source");
   if (!sourceImage) {
-    return Response.json({ evaluations: fallback }, { headers: { "Cache-Control": "no-store" } });
+    const evaluations = unavailableEvaluations(
+      candidates,
+      "The supplier image could not be loaded for comparison. Confirm the source image URL and retry the image check.",
+    );
+    return Response.json({ evaluations }, { headers: { "Cache-Control": "no-store" } });
   }
 
   const candidateImages = await Promise.all(
@@ -255,8 +270,16 @@ export async function POST(request: Request) {
   const usableCandidates = candidateImages.filter(
     (candidate): candidate is typeof candidate & { image: ImageAsset } => candidate.image !== null,
   );
+  const candidateFallback = fallback.map((evaluation, index) =>
+    candidateImages[index]?.image
+      ? evaluation
+      : {
+          ...evaluation,
+          reason: "The Amazon listing image could not be loaded. Open the listing and retry the image check before confirming it.",
+        },
+  );
   if (!usableCandidates.length) {
-    return Response.json({ evaluations: fallback }, { headers: { "Cache-Control": "no-store" } });
+    return Response.json({ evaluations: candidateFallback }, { headers: { "Cache-Control": "no-store" } });
   }
 
   const content: Array<
@@ -309,7 +332,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const evaluations = fallback.map((defaultEvaluation, index) => {
+    const evaluations = candidateFallback.map((defaultEvaluation, index) => {
       const evaluation = evaluationsByIndex.get(index);
       return evaluation
         ? { ...evaluation, reason: evaluation.reason.trim().slice(0, 240) }

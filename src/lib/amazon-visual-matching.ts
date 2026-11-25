@@ -11,6 +11,7 @@ export type VisualVerdict = "strong" | "possible" | "different" | "uncertain" | 
 interface VisualEvaluation {
   index: number;
   verdict: VisualVerdict;
+  imageMatchScore: number | null;
   reason: string;
 }
 
@@ -98,6 +99,7 @@ function evaluationFallback(index: number): VisualEvaluation {
   return {
     index,
     verdict: "unavailable",
+    imageMatchScore: null,
     reason: "The images could not be compared; title-word matching was used instead.",
   };
 }
@@ -121,13 +123,8 @@ async function requestVisualEvaluations(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: [product.title, product.imageTerms].filter(Boolean).join(" "),
-        brand: product.brand,
-        variant: product.variant,
-        size: product.size,
-        pack: product.pack,
         sourceImageUrl: response.regalImageUrl || product.regalImageUrl,
-        candidates: candidates.slice(0, 5).map(({ title, imageUrl }) => ({ title, imageUrl })),
+        candidates: candidates.slice(0, 5).map(({ imageUrl }) => ({ imageUrl })),
       }),
       signal,
     });
@@ -148,10 +145,18 @@ async function requestVisualEvaluations(
       ) {
         return [];
       }
+      const imageMatchScore =
+        typeof item.imageMatchScore === "number" &&
+        Number.isInteger(item.imageMatchScore) &&
+        item.imageMatchScore >= 0 &&
+        item.imageMatchScore <= 100
+          ? item.imageMatchScore
+          : null;
       return [
         {
           index: item.index,
           verdict: item.verdict,
+          imageMatchScore,
           reason:
             typeof item.reason === "string" && item.reason.trim()
               ? item.reason.trim().slice(0, 240)
@@ -169,11 +174,11 @@ async function requestVisualEvaluations(
 function reasonForCandidate(
   verdict: VisualVerdict,
   visualReason: string,
-  titleCoverage: number,
+  titleCoverage: number | null,
   mismatches: string[],
   exactEan: boolean,
 ): string {
-  const titlePercent = Math.round(titleCoverage * 100);
+  const titlePercent = titleCoverage === null ? null : Math.round(titleCoverage * 100);
   const mismatchText = mismatches.length
     ? ` The ${mismatches.join(", ")} also needs review.`
     : "";
@@ -185,18 +190,71 @@ function reasonForCandidate(
     return `The EAN appears exactly in the Amazon result text.${mismatchText}`;
   }
   if (verdict === "strong" && mismatches.length === 0) {
-    return `Strong visual evidence: ${visualReason}${titlePercent < 90 ? ` Only ${titlePercent}% of meaningful source product words overlap, so verify the label and variant before confirming.` : ""}`;
+    const titleNote = titlePercent === null
+      ? " No source title was provided to score."
+      : titlePercent < 90
+        ? ` Only ${titlePercent}% of meaningful source title words overlap, so verify the label and variant before confirming.`
+        : "";
+    return `Strong visual evidence: ${visualReason}${titleNote}`;
   }
   if (verdict === "different") {
-    return `The image review conflicts with the title match: ${visualReason} The listing is retained for manual review because ${titlePercent}% of meaningful source product words overlap.${mismatchText}`;
+    const titleNote = titlePercent === null
+      ? " No source title was supplied for text comparison."
+      : ` The listing is retained for manual review because ${titlePercent}% of meaningful source title words overlap.`;
+    return `The image review conflicts with the title match: ${visualReason}${titleNote}${mismatchText}`;
   }
-  return `The visual review was ${verdict === "unavailable" ? "unavailable" : "inconclusive"}; ${titlePercent}% of meaningful source product words overlap.${mismatchText} Compare the label, variant, size, and pack before confirming.`;
+  const titleNote = titlePercent === null
+    ? "No source title was supplied for text comparison."
+    : `${titlePercent}% of meaningful source title words overlap.`;
+  return `The visual review was ${verdict === "unavailable" ? "unavailable" : "inconclusive"}; ${titleNote}${mismatchText} Compare the label, variant, size, and pack before confirming.`;
 }
 
-function candidateRank(candidate: AmazonSearchCandidate): [number, number, number, number] {
+export function updateAmazonTitleMatch(
+  sourceTitle: string,
+  candidate: AmazonSearchCandidate,
+): AmazonSearchCandidate {
+  const title = candidate.amazonTitle || candidate.title;
+  const coverage = sourceTitle.trim() ? titleWordCoverage(sourceTitle, title) : null;
+  const exactEan = candidate.eanMatch;
+  const identityMismatches = candidateIdentityMismatch(candidate);
+  const visualVerdict = candidate.visualVerdict ?? "unavailable";
+  const visualConflict = visualVerdict === "different";
+  const needsManualReview = identityMismatches.length > 0 || visualConflict;
+  const titleFallback = titleMeetsFallbackThreshold(sourceTitle, title);
+  const tier = exactEan
+    ? needsManualReview
+      ? "low"
+      : "high"
+    : !titleFallback
+      ? "low"
+      : visualVerdict === "strong" && !needsManualReview
+        ? "medium"
+        : needsManualReview
+          ? "low"
+          : candidate.tier;
+
+  return {
+    ...candidate,
+    tier,
+    titleWordCoverage: coverage ?? undefined,
+    reason: reasonForCandidate(
+      visualVerdict,
+      candidate.visualReason ?? "The visual review did not provide a clear explanation.",
+      coverage,
+      identityMismatches,
+      exactEan,
+    ),
+  };
+}
+
+function candidateRank(candidate: AmazonSearchCandidate): [number, number, number, number, number] {
+  const eanPriority = candidate.eanMatch && candidate.visualVerdict !== "different" ? 1 : 0;
+  const titleScore = candidate.titleWordCoverage ?? 0;
+  const imageScore = typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore / 100 : null;
+  const combinedEvidence = imageScore === null ? titleScore : imageScore * 0.65 + titleScore * 0.35;
+  const visualRank = candidate.visualVerdict === "strong" ? 3 : candidate.visualVerdict === "possible" ? 2 : candidate.visualVerdict === "different" ? 0 : 1;
   const tierRank = candidate.tier === "high" ? 3 : candidate.tier === "medium" ? 2 : 1;
-  const visualRank = candidate.visualVerdict === "strong" ? 2 : candidate.visualVerdict === "different" ? 0 : 1;
-  return [tierRank, visualRank, candidate.titleWordCoverage ?? 0, candidate.titleScore];
+  return [eanPriority, combinedEvidence, visualRank, tierRank, candidate.titleScore];
 }
 
 function compareCandidates(left: AmazonSearchCandidate, right: AmazonSearchCandidate): number {
@@ -227,8 +285,8 @@ export async function verifyAmazonCandidates(
 
   candidates.forEach((candidate, index) => {
     const evaluation = evaluations[index] ?? evaluationFallback(index);
-    const sourceTitle = [product.brand, product.title, product.imageTerms, product.variant].filter(Boolean).join(" ");
-    const coverage = titleWordCoverage(sourceTitle, candidate.title);
+    const sourceTitle = [product.brand, product.title, product.variant].filter(Boolean).join(" ");
+    const coverage = sourceTitle ? titleWordCoverage(sourceTitle, candidate.title) : null;
     const exactEan = candidate.eanMatch;
     const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidate.title);
     const identityMismatches = candidateIdentityMismatch(candidate);
@@ -253,7 +311,8 @@ export async function verifyAmazonCandidates(
       tier,
       visualVerdict: evaluation.verdict,
       visualReason,
-      titleWordCoverage: coverage,
+      imageMatchScore: evaluation.imageMatchScore,
+      titleWordCoverage: coverage ?? undefined,
       reason: reasonForCandidate(evaluation.verdict, visualReason, coverage, identityMismatches, exactEan),
     });
   });

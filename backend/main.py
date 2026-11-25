@@ -68,6 +68,20 @@ class MatchRequest(BaseModel):
         return " ".join(cleaned.split())
 
 
+class AmazonOfferRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    asin: str = Field(min_length=10, max_length=10)
+
+    @field_validator("asin")
+    @classmethod
+    def validate_asin(cls, value: str) -> str:
+        normalized = value.upper()
+        if not re.fullmatch(r"[A-Z0-9]{10}", normalized):
+            raise ValueError("ASIN must contain exactly 10 letters or digits.")
+        return normalized
+
+
 class AmazonBlocked(Exception):
     pass
 
@@ -80,7 +94,7 @@ _amazon_blocked_until = 0.0
 
 @app.middleware("http")
 async def limit_lookup_body(request: Request, call_next):
-    if request.url.path == "/api/amazon/match":
+    if request.url.path in {"/api/amazon/match", "/api/amazon/offer"}:
         content_length = int(request.headers.get("content-length", "0") or 0)
         if content_length > 16 * 1024:
             return JSONResponse({"detail": "The product lookup request is too large."}, status_code=413)
@@ -100,6 +114,15 @@ def clean_title(title: str) -> str:
 
 def normalize_text(value: str) -> str:
     return " ".join(value.replace("\u00a0", " ").split()).strip()
+
+
+def extract_seller_name(value: str) -> str:
+    match = re.search(
+        r"\b(?:sold\s+by|seller)\s*:?\s*(.+?)(?=\s+(?:(?:and\s+)?(?:ships?|dispatches?|dispatched)\s+(?:from|by)|returns?|conditions?)\b|\s*[|]|$)",
+        value,
+        re.IGNORECASE,
+    )
+    return normalize_text(match.group(1)).strip(" ,;|") if match else ""
 
 
 def tokens(value: str) -> set[str]:
@@ -348,6 +371,52 @@ def amazon_product_url(href: str, asin: str) -> str:
     return f"{AMAZON_ORIGIN}/dp/{product_id.upper()}"
 
 
+def amazon_card_title(title_tag, link, image_tag) -> str:
+    values = [
+        link.get("title", "") if link else "",
+        link.get("aria-label", "") if link else "",
+        title_tag.get("title", ""),
+        title_tag.get("aria-label", ""),
+        title_tag.get_text(" ", strip=True),
+        image_tag.get("alt", ""),
+    ]
+    titles = [normalize_text(str(value)) for value in values if value]
+    return max(titles, key=len, default="")
+
+
+def extract_amazon_product_details(html: str) -> dict[str, str]:
+    soup = BeautifulSoup(html, "html.parser")
+    title_tag = soup.select_one("#productTitle") or soup.select_one("h1")
+    title = normalize_text(title_tag.get_text(" ", strip=True)) if title_tag else ""
+    if not title:
+        title_meta = soup.select_one('meta[property="og:title"]')
+        title = normalize_text(str(title_meta.get("content", ""))) if title_meta else ""
+
+    seller_tag = soup.select_one("#sellerProfileTriggerId")
+    seller = normalize_text(seller_tag.get_text(" ", strip=True)) if seller_tag else ""
+    if not seller:
+        merchant_tag = soup.select_one("#merchant-info") or soup.select_one("[data-feature-name='merchantInfoFeature']")
+        merchant_text = normalize_text(merchant_tag.get_text(" ", strip=True)) if merchant_tag else ""
+        seller = extract_seller_name(merchant_text)
+
+    price = ""
+    for selector in (
+        "#corePriceDisplay_desktop_feature_div .a-offscreen",
+        "#corePrice_feature_div .a-offscreen",
+        "#price_inside_buybox",
+        "#priceblock_ourprice",
+        "#priceblock_dealprice",
+        "#desktop_buybox .a-price .a-offscreen",
+    ):
+        price_tag = soup.select_one(selector)
+        if price_tag:
+            price = normalize_text(price_tag.get_text(" ", strip=True))
+            if price:
+                break
+
+    return {"amazonTitle": title, "seller": seller, "price": price}
+
+
 def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     products = soup.find_all("div", {"data-component-type": "s-search-result"})
@@ -359,9 +428,9 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
         image_tag = product.find("img", class_="s-image")
         if not title_tag or not image_tag:
             continue
-        title = normalize_text(title_tag.get_text(" ", strip=True))
-        image_url = image_from_card(image_tag)
         link = title_tag.find("a") or product.find("a", href=True)
+        title = amazon_card_title(title_tag, link, image_tag)
+        image_url = image_from_card(image_tag)
         href = str(link.get("href", "")) if link else ""
         asin = str(product.get("data-asin", "")).strip().upper()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
@@ -383,6 +452,7 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
                 "imageUrl": image_url,
                 "productUrl": product_url,
                 "price": price,
+                "seller": extract_seller_name(card_text),
                 "cardText": card_text,
                 "eanMatch": exact_ean_in_text(ean, card_text),
             }
@@ -400,7 +470,7 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
         link = image_tag.find_parent("a")
         container = link.find_parent("div") if link else None
         title_tag = container.find("h2") if container else None
-        title = normalize_text(title_tag.get_text(" ", strip=True)) if title_tag else ""
+        title = amazon_card_title(title_tag, link, image_tag) if title_tag else normalize_text(str(image_tag.get("alt", "")))
         if not title:
             continue
         href = str(link.get("href", "")) if link else ""
@@ -416,6 +486,7 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
                 "imageUrl": image_url,
                 "productUrl": product_url,
                 "price": "",
+                "seller": extract_seller_name(normalize_text(container.get_text(" ", strip=True))) if container else "",
                 "cardText": normalize_text(container.get_text(" ", strip=True))[:3000] if container else title,
                 "eanMatch": False,
             }
@@ -441,20 +512,19 @@ def read_limited_response(response: requests.Response, maximum_bytes: int) -> by
     return b"".join(parts)
 
 
-def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
+def fetch_amazon_page(url: str, request_error_message: str) -> str:
     global _amazon_blocked_until, _last_amazon_request_at
-    search_url = f"{AMAZON_ORIGIN}/s?{urllib.parse.urlencode({'k': query})}"
     with _amazon_lock:
         now = time.monotonic()
         if now < _amazon_blocked_until:
-            raise AmazonBlocked("Amazon is temporarily blocking automated searches. Wait before trying another batch.")
+            raise AmazonBlocked("Amazon is temporarily limiting requests. Wait before trying again.")
         wait_seconds = AMAZON_MIN_GAP_SECONDS - (now - _last_amazon_request_at)
         if wait_seconds > 0:
             time.sleep(wait_seconds)
         try:
             with requests.Session() as session:
                 response = session.get(
-                    search_url,
+                    url,
                     headers=HEADERS,
                     timeout=AMAZON_TIMEOUT_SECONDS,
                     allow_redirects=True,
@@ -467,21 +537,59 @@ def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
                 html = read_limited_response(response, MAX_PAGE_BYTES)
                 if response.status_code in {403, 429, 503}:
                     _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
-                    raise AmazonBlocked("Amazon is temporarily blocking automated searches. Wait before trying another batch.")
+                    raise AmazonBlocked("Amazon is temporarily limiting requests. Wait before trying again.")
                 if response.status_code != 200:
                     raise RuntimeError(f"Amazon UK returned HTTP {response.status_code}.")
                 html_text = html.decode("utf-8", errors="replace")
                 lowered = html_text.lower()
                 if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
                     _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
-                    raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The matcher stopped without retrying.")
+                    raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The lookup stopped without retrying.")
+                return html_text
         except requests.RequestException as error:
             _last_amazon_request_at = time.monotonic()
-            raise RuntimeError("The Amazon UK search could not be reached. Try again later.") from error
+            raise RuntimeError(request_error_message) from error
 
+
+def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
+    search_url = f"{AMAZON_ORIGIN}/s?{urllib.parse.urlencode({'k': query})}"
+    html_text = fetch_amazon_page(search_url, "The Amazon UK search could not be reached. Try again later.")
+    lowered = html_text.lower()
     if "no results for" in lowered or "did not match any products" in lowered:
         return []
     return extract_amazon_candidates(html_text, ean)
+
+
+@app.post("/api/amazon/offer")
+def get_amazon_offer(request: AmazonOfferRequest):
+    try:
+        html_text = fetch_amazon_page(
+            f"{AMAZON_ORIGIN}/dp/{request.asin}",
+            "The Amazon UK listing details could not be reached. Try again later.",
+        )
+        details = extract_amazon_product_details(html_text)
+    except AmazonBlocked as error:
+        return {"status": "blocked", "message": str(error), "amazonTitle": "", "seller": "", "price": ""}
+    except (RuntimeError, ValueError) as error:
+        return {
+            "status": "error",
+            "message": str(error) or "The Amazon UK listing details could not be read.",
+            "amazonTitle": "",
+            "seller": "",
+            "price": "",
+        }
+
+    missing_fields = [
+        label
+        for key, label in (("amazonTitle", "full title"), ("seller", "seller"), ("price", "price"))
+        if not details[key]
+    ]
+    message = (
+        f"Amazon did not show the {' and '.join(missing_fields)} on this product page."
+        if missing_fields
+        else "Full title, seller, and price read from the Amazon product page."
+    )
+    return {"status": "found" if not missing_fields else "partial", "message": message, **details}
 
 
 def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:

@@ -104,7 +104,7 @@ export function AmazonSingleItemTest() {
       const match = matchPayload as AmazonMatchResponse;
       const sourceProduct: AmazonProductInput = {
         ean: "",
-        title: searchTitle,
+        title: productTitle,
         brand: "",
         variant: "",
         size: productSize,
@@ -115,7 +115,7 @@ export function AmazonSingleItemTest() {
       const verifiedMatch = await verifyAmazonCandidates(sourceProduct, match);
       setResult({
         ...sourceProduct,
-        title: productTitle || searchTitle,
+        title: productTitle,
         regalImageUrl: verifiedMatch.regalImageUrl || productImageUrl,
         rowNumber: 0,
         key: "single-item-test",
@@ -151,6 +151,26 @@ export function AmazonSingleItemTest() {
     );
   }
 
+  function updateCandidateDetails(_rowNumber: number, candidate: AmazonSearchCandidate) {
+    setResult((current) => {
+      if (!current) return current;
+      const matches = (existing: AmazonSearchCandidate) =>
+        candidate.asin && existing.asin
+          ? candidate.asin === existing.asin
+          : candidate.productUrl && existing.productUrl
+            ? candidate.productUrl === existing.productUrl
+            : candidate.title === existing.title;
+      const updatesBestCandidate = current.bestCandidate !== null && matches(current.bestCandidate);
+      return {
+        ...current,
+        status: updatesBestCandidate ? candidate.tier : current.status,
+        message: updatesBestCandidate ? candidate.reason : current.message,
+        candidates: current.candidates.map((existing) => (matches(existing) ? candidate : existing)),
+        bestCandidate: updatesBestCandidate ? candidate : current.bestCandidate,
+      };
+    });
+  }
+
   return (
     <section className="single-item-test" aria-labelledby="single-item-test-title">
       <div className="single-item-test-heading">
@@ -158,7 +178,7 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            The visual review prioritizes package shape and dominant colors, using title and label details to confirm identity. Check size and pack before confirming a listing.
+            Title and image matches are scored independently. Load the Amazon listing&apos;s full title, seller, and current page price, then check size and pack before confirming.
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>
@@ -262,7 +282,12 @@ export function AmazonSingleItemTest() {
         <div className="single-item-test-result">
           <p className="single-item-search-phrase"><strong>Search phrase:</strong> {searchPhrase}</p>
           <div className="amazon-results-list">
-            <AmazonMatchCard result={result} onDecision={updateDecision} onCandidateSelect={updateCandidate} />
+            <AmazonMatchCard
+            result={result}
+            onDecision={updateDecision}
+            onCandidateSelect={updateCandidate}
+            onCandidateDetails={updateCandidateDetails}
+          />
           </div>
         </div>
       ) : null}

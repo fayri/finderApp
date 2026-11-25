@@ -1485,9 +1485,10 @@ label:focus-visible {
 
 .amazon-compare-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
 }
 
@@ -1503,39 +1504,40 @@ label:focus-visible {
   letter-spacing: 0.8px;
 }
 
-.amazon-match-percentage {
+.amazon-match-score-list,
+.amazon-candidate-scores {
   display: flex;
-  align-items: baseline;
+  align-items: stretch;
   gap: 6px;
-  color: #18724f;
+  flex-wrap: wrap;
 }
 
-.amazon-match-percentage strong {
-  font-size: 26px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -1px;
-}
-
-.amazon-match-percentage span {
-  color: #687587;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.amazon-candidate-coverage {
+.amazon-score-metric {
+  min-width: 90px;
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin: 5px 0 0;
+  padding: 5px 7px;
+  border: 1px solid #e8eee9;
+  border-radius: 7px;
   color: #687587;
-  font-size: 11px;
+  background: #fff;
+  font-size: 9px;
 }
 
-.amazon-candidate-coverage strong {
+.amazon-score-metric strong {
   color: #18724f;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.amazon-score-metric span {
+  font-weight: 650;
+}
+
+.amazon-candidate-scores {
+  margin-top: 8px;
 }
 
 .amazon-label-text {
@@ -1598,24 +1600,28 @@ label:focus-visible {
 }
 
 .amazon-compare-title {
-  display: -webkit-box;
-  overflow: hidden;
   margin: 9px 0 0;
   color: #344562;
   font-size: 13px;
   font-weight: 700;
   line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .amazon-compare-detail {
-  overflow: hidden;
-  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 7px 0 0;
   color: #8993a2;
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.amazon-compare-detail strong,
+.amazon-candidate-detail strong {
+  color: #56647a;
 }
 
 .amazon-result-links {
@@ -1701,25 +1707,56 @@ label:focus-visible {
 }
 
 .amazon-candidate-title {
-  display: -webkit-box;
-  overflow: hidden;
-  min-height: 30px;
   margin: 8px 0 0;
   color: #344562;
   font-size: 11px;
   font-weight: 700;
   line-height: 1.5;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.amazon-candidate-search-title {
+  margin: 4px 0 0;
+  color: #8792a2;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .amazon-candidate-detail {
-  overflow: hidden;
-  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0 0;
   color: #8993a2;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.amazon-details-message,
+.amazon-visual-verdict {
+  margin: 6px 0 0;
+  color: #758195;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.amazon-details-button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.amazon-detail-spinner {
+  animation: spin 1.2s linear infinite;
+}
+
+.amazon-listing-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .amazon-candidate-visual-reason {

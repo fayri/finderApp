@@ -4,10 +4,8 @@ from pathlib import Path
 import sys
 from unittest.mock import patch
 
-from PIL import Image
-
 sys.path.insert(0, str(Path(__file__).parent))
-from main import AmazonBlocked, MatchRequest, build_search_queries, calculate_image_similarity, classify_candidate, extract_amazon_candidates, match_product, search_amazon
+from main import AmazonBlocked, MatchRequest, build_search_queries, classify_candidate, extract_amazon_candidates, match_product, search_amazon
 
 
 class MatcherTests(unittest.TestCase):
@@ -44,7 +42,10 @@ class MatcherTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result["tier"], "medium")
+        self.assertTrue(result["brandMatch"])
+        self.assertTrue(result["variantMatch"])
         self.assertTrue(result["sizeMatch"])
+        self.assertTrue(result["packMatch"])
 
     def test_category_synonym_can_match_with_confirmed_size(self):
         product = MatchRequest(title="Soap", brand="Northstar", size="250 ml", category="soap_hygiene")
@@ -188,7 +189,7 @@ class MatcherTests(unittest.TestCase):
         ]
         product = MatchRequest(title="Antibacterial Hand Wash", brand="Northstar", category="soap_hygiene")
 
-        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""), patch("main.download_image", return_value=None):
+        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
             result = match_product(product)
 
         self.assertEqual(len(result["candidates"]), 5)
@@ -200,13 +201,6 @@ class MatcherTests(unittest.TestCase):
                 search_amazon("Northstar Gentle Soap", "")
 
         session.assert_not_called()
-
-    def test_image_similarity_identical_images_is_100(self):
-        image_one = Image.new("RGB", (90, 70), (220, 80, 40))
-        image_two = Image.new("RGB", (32, 32), (220, 80, 40))
-
-        self.assertEqual(calculate_image_similarity(image_one, image_two), 100.0)
-
 
 if __name__ == "__main__":
     unittest.main()

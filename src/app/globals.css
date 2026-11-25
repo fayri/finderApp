@@ -1660,6 +1660,17 @@ label:focus-visible {
   white-space: nowrap;
 }
 
+.amazon-candidate-visual-reason {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 5px 0 0;
+  color: #687587;
+  font-size: 9px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .amazon-candidate-actions {
   display: flex;
   align-items: center;

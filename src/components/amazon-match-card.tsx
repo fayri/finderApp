@@ -9,6 +9,14 @@ interface AmazonMatchCardProps {
   onCandidateSelect: (rowNumber: number, candidate: AmazonSearchCandidate) => void;
 }
 
+const visualLabels = {
+  strong: "Strong visual match",
+  possible: "Possible visual match",
+  different: "Visual conflict",
+  uncertain: "Visual review inconclusive",
+  unavailable: "Visual review unavailable",
+} as const;
+
 const statusLabels = {
   high: "High match",
   medium: "Medium · review",
@@ -73,12 +81,14 @@ function CandidateOption({
       <ImageFrame
         src={candidate.imageUrl}
         alt={`Amazon listing image: ${candidate.title}`}
-        label={selected ? "Selected" : `${candidate.tier} match`}
+        label={selected ? "Selected" : candidate.visualVerdict ? visualLabels[candidate.visualVerdict] : `${candidate.tier} match`}
       />
       <p className="amazon-candidate-title" title={candidate.title}>{candidate.title}</p>
       <p className="amazon-candidate-detail">
         {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
+        {typeof candidate.titleWordCoverage === "number" ? ` · Title words ${Math.round(candidate.titleWordCoverage * 100)}%` : ""}
       </p>
+      {candidate.visualReason ? <p className="amazon-candidate-visual-reason">{candidate.visualReason}</p> : null}
       <div className="amazon-candidate-actions">
         <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
           Open listing <ExternalLink size={13} aria-hidden="true" />
@@ -162,7 +172,8 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
               <p className="amazon-compare-title">{candidate.title}</p>
               <p className="amazon-compare-detail">
                 {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
-                {typeof candidate.imageSimilarity === "number" ? ` · ${candidate.imageSimilarity}% pixel similarity` : ""}
+                {candidate.visualVerdict ? ` · AI visual check: ${visualLabels[candidate.visualVerdict]}` : ""}
+                {typeof candidate.titleWordCoverage === "number" ? ` · Source title words: ${Math.round(candidate.titleWordCoverage * 100)}%` : ""}
               </p>
               <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
                 Open listing <ExternalLink size={13} aria-hidden="true" />

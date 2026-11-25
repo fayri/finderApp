@@ -539,7 +539,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <p className="eyebrow"><span className="eyebrow-line" /> PRODUCT MATCH REVIEW</p>
           <h1 id="amazon-page-title">Find the right listing,<br /><span>then check the image.</span></h1>
           <p className="hero-description">
-            Search Amazon UK from your EAN, product title, brand, variant and size. Strong EAN evidence is separated from results that need a human check.
+            Search Amazon UK from your EAN, product title, brand, variant and size. A confident match needs both a strong title match and strong visual evidence; an EAN alone cannot override a visual conflict.
           </p>
         </div>
         <div className="hero-note" aria-label="Search pacing note">
@@ -657,7 +657,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Category is only a search-expansion hint and does not increase confidence by itself. The top five Amazon listings are kept for your review, including options with low title overlap; title, brand, package, and image signals affect ranking and confidence only. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Category only expands search. A confident result needs a strong title match (at least 90% meaningful-word coverage), strong visual evidence (at least 85%), and no brand, variant, or size conflict; an EAN cannot override a visual mismatch. Pack-count and photo-angle differences alone are allowed, but a different product form is not. The top five Amazon listings remain available for review, including low-confidence options. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>

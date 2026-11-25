@@ -183,7 +183,7 @@ function unavailableEvaluations(candidates: CandidateInput[]) {
     index,
     verdict: "uncertain" as const,
     imageMatchScore: null,
-    reason: "The images could not be compared; title-word matching was used instead.",
+    reason: "Visual comparison is unavailable; this candidate cannot be automatically confirmed without image evidence.",
   }));
 }
 
@@ -285,8 +285,9 @@ export async function POST(request: Request) {
       instructions: [
         "Compare each Amazon candidate image with the source product image and return one conservative visual assessment per candidate index.",
         "Assess visible packaging, product silhouette, colors, and text that can actually be read in the images. Do not use external product titles, search terms, or source metadata: the image score must stay independent of title matching.",
-        "Do not require pixel-identical packaging: packaging redesigns can still depict the same product when distinctive visual evidence supports it. A shared product category alone is weak evidence.",
-        "Use strong only when multiple product-specific visual cues align and no clear visual contradiction exists; possible when some cues align but are inconclusive; different for a clear visual conflict; uncertain when the images are too unclear.",
+        "Do not require pixel-identical packaging: packaging redesigns, rotated or reversed label views, crops, and a different number of units in a multipack can still depict the same individual product when distinctive visual evidence supports it. Do not call a match different based only on pack quantity or photo orientation.",
+        "A shared product category alone is weak evidence. Product form matters: a bottle and a dispenser are different products even if their brand, category, or colors are similar. Compare the actual container silhouette, label, brand marks, and distinctive product details.",
+        "Use strong only when multiple product-specific visual cues align and no clear visual contradiction exists; possible when some cues align but are inconclusive; different for a clear product-form or visual conflict; uncertain when the images are too unclear. Keep the score consistent with that verdict: strong requires at least 85, while possible is below 85.",
         "Return an integer imageMatchScore from 0 to 100 as an AI-estimated visual similarity, not a calibrated probability. Keep the score consistent with the verdict and cite visible evidence in the short reason.",
         'Return only the requested structured result. Use the exact shape {"evaluations":[{"index":0,"verdict":"strong|possible|different|uncertain","imageMatchScore":0,"reason":"..."}]}.',
       ].join(" "),

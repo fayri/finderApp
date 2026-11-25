@@ -28,6 +28,7 @@ import type {
 import type { ParsedSource } from "@/lib/types";
 import { fallbackCategory } from "@/lib/amazon-categories";
 import { getApiErrorMessage } from "@/lib/amazon-api-errors";
+import { verifyAmazonCandidates } from "@/lib/amazon-visual-matching";
 import { normalizeEan, parseSpreadsheet } from "@/lib/spreadsheet";
 
 const MAX_PRODUCTS_PER_RUN = 100;
@@ -147,7 +148,8 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
     "Amazon title",
     "Amazon ASIN",
     "Amazon price",
-    "Image pixel similarity",
+    "AI visual review",
+    "Source title word match",
     "Amazon URL",
     "Match notes",
   ];
@@ -165,9 +167,10 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
       result.bestCandidate?.title ?? "",
       result.bestCandidate?.asin ?? "",
       result.bestCandidate?.price ?? "",
-      result.bestCandidate?.imageSimilarity === null || result.bestCandidate?.imageSimilarity === undefined
-        ? ""
-        : `${result.bestCandidate.imageSimilarity}%`,
+      result.bestCandidate?.visualVerdict ?? "",
+      typeof result.bestCandidate?.titleWordCoverage === "number"
+        ? `${Math.round(result.bestCandidate.titleWordCoverage * 100)}%`
+        : "",
       result.bestCandidate?.productUrl ?? "",
       result.bestCandidate?.reason ?? result.message,
     ].map(formulaSafe),
@@ -341,13 +344,15 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             }
 
             const matchPayload = payload as AmazonMatchResponse;
+            const verifiedMatch = await verifyAmazonCandidates(product, matchPayload, controller.signal);
+            if (controller.signal.aborted) return;
             const rowResult: AmazonMatchRow = {
               ...product,
-              status: matchPayload.status,
-              message: matchPayload.message,
-              regalImageUrl: matchPayload.regalImageUrl || product.regalImageUrl,
-              bestCandidate: matchPayload.bestCandidate,
-              candidates: matchPayload.candidates ?? [],
+              status: verifiedMatch.status,
+              message: verifiedMatch.message,
+              regalImageUrl: verifiedMatch.regalImageUrl || product.regalImageUrl,
+              bestCandidate: verifiedMatch.bestCandidate,
+              candidates: verifiedMatch.candidates ?? [],
               decision: null,
             };
             resultsByKey.set(product.key, rowResult);
@@ -558,7 +563,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Product titles are matched locally against the bundled category dictionary; unclear titles use the general category. Relevant dictionary terms such as antibacterial, caring, protective, or cleansing are added to Amazon searches when more options are needed. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Category is only a search-expansion hint and cannot qualify a result. Product identity is checked using distinctive title words and package imagery; if visual evidence is unclear, at least 90% of distinctive title words (minimum two) must match. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
@@ -618,7 +623,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               ))}
             </div>
             <p className="results-disclaimer amazon-disclaimer">
-              The image score uses the notebook&apos;s 32 × 32 grayscale pixel-difference heuristic; it is only a visual hint, not proof of a match. High matches require the EAN to appear exactly in the Amazon result text. Medium and low matches remain reviewable.
+              AI visual review prioritizes package shape and dominant color, with title and label details as identity evidence; category overlap alone is never enough. If visual review is unavailable or inconclusive, at least 90% of distinctive source-title words must match (at least two words; generic category terms do not count). High matches require an exact EAN in the Amazon result text; medium and low matches remain reviewable.
             </p>
           </>
         ) : (

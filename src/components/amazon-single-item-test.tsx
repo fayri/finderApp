@@ -5,7 +5,8 @@ import { ArrowRight, Clock3, ExternalLink, Image as ImageIcon } from "lucide-rea
 import { AmazonMatchCard } from "@/components/amazon-match-card";
 import { getApiErrorMessage } from "@/lib/amazon-api-errors";
 import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
-import type { AmazonMatchResponse, AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
+import { verifyAmazonCandidates } from "@/lib/amazon-visual-matching";
+import type { AmazonMatchResponse, AmazonMatchRow, AmazonProductInput, AmazonSearchCandidate } from "@/lib/amazon-types";
 
 interface ImageQueryResponse {
   query?: string;
@@ -100,20 +101,26 @@ export function AmazonSingleItemTest() {
       }
 
       const match = matchPayload as AmazonMatchResponse;
-      setResult({
+      const sourceProduct: AmazonProductInput = {
         ean: "",
-        title: productTitle || searchTitle,
+        title: searchTitle,
         brand: "",
         variant: "",
         size: productSize,
         pack: productPack,
-        regalImageUrl: match.regalImageUrl || productImageUrl,
+        regalImageUrl: productImageUrl,
+      };
+      const verifiedMatch = await verifyAmazonCandidates(sourceProduct, match);
+      setResult({
+        ...sourceProduct,
+        title: productTitle || searchTitle,
+        regalImageUrl: verifiedMatch.regalImageUrl || productImageUrl,
         rowNumber: 0,
         key: "single-item-test",
-        status: match.status,
-        message: imageAnalysisWarning ? `${match.message} ${imageAnalysisWarning}` : match.message,
-        bestCandidate: match.bestCandidate,
-        candidates: match.candidates ?? [],
+        status: verifiedMatch.status,
+        message: imageAnalysisWarning ? `${verifiedMatch.message} ${imageAnalysisWarning}` : verifiedMatch.message,
+        bestCandidate: verifiedMatch.bestCandidate,
+        candidates: verifiedMatch.candidates ?? [],
         decision: null,
       });
     } catch (error) {
@@ -149,7 +156,7 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            Search with the product title and image together, then use pack and size to confirm the Amazon UK candidate.
+            The visual review prioritizes package shape and dominant colors, using title and label details to confirm identity. Check size and pack before confirming a listing.
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>

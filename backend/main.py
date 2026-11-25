@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import re
 import threading
@@ -15,7 +14,6 @@ import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 REGAL_ORIGIN = "https://regalsales.co.uk"
@@ -24,7 +22,6 @@ AMAZON_MIN_GAP_SECONDS = 3.0
 AMAZON_TIMEOUT_SECONDS = 15
 AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CANDIDATES = 8
 MAX_RESULT_CANDIDATES = 5
 MAX_SEARCH_QUERIES = 5
@@ -232,7 +229,10 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
             "reason": reason,
             "titleScore": title_score,
             "eanMatch": exact_ean,
+            "brandMatch": brand_match,
+            "variantMatch": variant_match,
             "sizeMatch": size_match,
+            "packMatch": pack_match,
         }
     )
     return classified
@@ -503,50 +503,9 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     return queries
 
 
-def allowed_image_url(value: str, kind: Literal["regal", "amazon"]) -> bool:
-    try:
-        parsed = urlparse(value)
-        if parsed.scheme != "https":
-            return False
-        hostname = (parsed.hostname or "").lower()
-        if kind == "regal":
-            return hostname in {"regalsales.co.uk", "www.regalsales.co.uk"}
-        return hostname == "media-amazon.com" or hostname.endswith(".media-amazon.com") or hostname.endswith(".ssl-images-amazon.com")
-    except ValueError:
-        return False
-
-
-def download_image(value: str, kind: Literal["regal", "amazon"]) -> Image.Image | None:
-    if not allowed_image_url(value, kind):
-        return None
-    try:
-        with requests.get(value, headers=HEADERS, timeout=10, stream=True) as response:
-            if response.status_code != 200:
-                return None
-            content = read_limited_response(response, MAX_IMAGE_BYTES)
-        with Image.open(io.BytesIO(content)) as image:
-            if image.width * image.height > 20_000_000:
-                return None
-            return image.convert("RGB")
-    except (requests.RequestException, UnidentifiedImageError, OSError, ValueError):
-        return None
-
-
-def calculate_image_similarity(image_one: Image.Image | None, image_two: Image.Image | None) -> float | None:
-    """Preserve the notebook's 32x32 grayscale pixel-difference comparison."""
-    if image_one is None or image_two is None:
-        return None
-    first = image_one.resize((32, 32)).convert("L")
-    second = image_two.resize((32, 32)).convert("L")
-    first_pixels = list(first.get_flattened_data() if hasattr(first, "get_flattened_data") else first.getdata())
-    second_pixels = list(second.get_flattened_data() if hasattr(second, "get_flattened_data") else second.getdata())
-    difference = sum(abs(left - right) for left, right in zip(first_pixels, second_pixels)) / len(first_pixels)
-    return round(max(0.0, 100.0 - (difference / 2.55)), 2)
-
-
-def candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, float, float]:
+def candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, float]:
     priority = {"high": 3, "medium": 2, "low": 1}.get(candidate.get("tier"), 0)
-    return (priority, float(candidate.get("titleScore", 0)), float(candidate.get("imageSimilarity") or 0))
+    return (priority, float(candidate.get("titleScore", 0)))
 
 
 @app.get("/health")
@@ -616,12 +575,7 @@ def match_product(product: MatchRequest):
             "searchedQueries": searched_queries,
         }
 
-    regal_image = download_image(regal_image_url, "regal") if regal_image_url else None
     visible_candidates = candidates[:MAX_RESULT_CANDIDATES]
-    for candidate in visible_candidates:
-        amazon_image = download_image(str(candidate.get("imageUrl", "")), "amazon") if regal_image else None
-        candidate["imageSimilarity"] = calculate_image_similarity(regal_image, amazon_image)
-    visible_candidates.sort(key=candidate_sort_key, reverse=True)
     best = visible_candidates[0]
 
     return {

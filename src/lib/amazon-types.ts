@@ -11,6 +11,8 @@ export interface AmazonProductInput {
   regalImageUrl: string;
 }
 
+export type AmazonVisualVerdict = "strong" | "possible" | "different" | "uncertain" | "unavailable";
+
 export interface AmazonSearchCandidate {
   asin: string;
   title: string;
@@ -21,8 +23,13 @@ export interface AmazonSearchCandidate {
   reason: string;
   titleScore: number;
   eanMatch: boolean;
+  brandMatch?: boolean;
+  variantMatch?: boolean;
   sizeMatch: boolean;
-  imageSimilarity?: number | null;
+  packMatch?: boolean;
+  visualVerdict?: AmazonVisualVerdict;
+  visualReason?: string;
+  titleWordCoverage?: number;
   searchedBy: "ean" | "detail" | "image" | "brand" | "category";
 }
 

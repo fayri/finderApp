@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import Image from "next/image";
 import { BadgeCheck, Check, CircleHelp, ExternalLink, ImageOff, LoaderCircle, RotateCw, SearchX, ShieldAlert, X } from "lucide-react";
 import type { AmazonMatchRow, AmazonOfferDetailsResponse, AmazonSearchCandidate } from "@/lib/amazon-types";
@@ -277,58 +277,140 @@ function CandidateOption({
   fallbackSearchUrl: string;
   result: AmazonMatchRow;
 }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isPinnedOpen, setIsPinnedOpen] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const detailsId = useId();
   const displayTitle = candidate.amazonTitle || candidate.title;
   const sellerValue = candidate.seller || (candidate.listingDetailsChecked ? "Not shown" : "Not checked");
+  const isExpanded = isPinnedOpen || ((isHovered || isFocused) && !isDismissed);
+  const visualLabel = candidate.visualVerdict
+    ? visualLabels[candidate.visualVerdict]
+    : candidate.tier === "low"
+      ? "Manual review"
+      : `${candidate.tier} match`;
+
+  function toggleDetails() {
+    setIsPinnedOpen((isOpen) => {
+      const nextOpen = !isOpen;
+      setIsDismissed(!nextOpen);
+      return nextOpen;
+    });
+  }
+
   return (
-    <article className={`amazon-candidate-option${selected ? " is-selected" : ""}`} aria-label={`Amazon listing: ${displayTitle}`}>
-      <ImageFrame
-        src={candidate.imageUrl}
-        alt={`Amazon listing image: ${candidate.title}`}
-        label={
-          selected
-            ? "Selected"
-            : candidate.visualVerdict
-              ? visualLabels[candidate.visualVerdict]
-              : candidate.tier === "low"
-                ? "Manual review option"
-                : `${candidate.tier} match`
-        }
-      />
-      <p className="amazon-candidate-title" title={displayTitle}>{displayTitle}</p>
-      {candidate.amazonTitle && candidate.amazonTitle !== candidate.title ? (
-        <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
-      ) : null}
-      <p className="amazon-candidate-detail">
-        <span><strong>Shipper / seller:</strong> {sellerValue}</span>
-        <span><strong>Price:</strong> {candidate.price || "Not found"}</span>
-        <span>ASIN {candidate.asin || "not available"}</span>
-      </p>
-      <AttributeMatchSummary result={result} candidate={candidate} />
-      <div className="amazon-candidate-scores" aria-label="Independent match scores">
-        <ScoreMetric label="Title match" percentage={typeof candidate.titleWordCoverage === "number" ? candidate.titleWordCoverage * 100 : null} />
-        <ScoreMetric
-          label="Image match"
-          percentage={typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore : null}
-          emptyLabel="Check failed"
-          help="Visual evidence is required; an unavailable or inconclusive image check cannot confirm this listing."
+    <article
+      className={`amazon-candidate-option${selected ? " is-selected" : ""}${isExpanded ? " is-open" : ""}`}
+      aria-label={`Amazon listing: ${displayTitle}`}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        setIsDismissed(false);
+      }}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocusCapture={() => {
+        setIsFocused(true);
+        setIsDismissed(false);
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsFocused(false);
+      }}
+    >
+      <div className="amazon-candidate-summary">
+        <ImageFrame
+          src={candidate.imageUrl}
+          alt={`Amazon listing image: ${displayTitle}`}
+          label={selected ? "Top match" : visualLabel}
         />
-      </div>
-      {candidate.visualReason ? <p className="amazon-candidate-visual-reason">{candidate.visualReason}</p> : null}
-      {candidate.listingDetailsMessage ? <p className="amazon-details-message" role="status">{candidate.listingDetailsMessage}</p> : null}
-      <div className="amazon-candidate-actions">
-        <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
-          Open listing <ExternalLink size={13} aria-hidden="true" />
-        </a>
-        <AmazonDetailsButton candidate={candidate} sourceTitle={sourceTitle} onDetails={onDetails} />
+        <p className="amazon-candidate-title" title={displayTitle}>{displayTitle}</p>
+        <div className="amazon-candidate-overview">
+          <strong>{candidate.amazonUnitPrice ? `${candidate.amazonUnitPrice} / item` : candidate.price || "Price not found"}</strong>
+          <span>{visualLabel}</span>
+        </div>
+        <div className="amazon-candidate-quick-checks" aria-label="Size and pack review">
+          <span className={candidate.sizeMatch ? "is-match" : "is-review"}>Size {candidate.sizeMatch ? "match" : "review"}</span>
+          <span className={candidate.packMatch === false ? "is-review" : "is-match"}>
+            Pack {candidate.packMatch === false ? "differs" : "match"}
+          </span>
+        </div>
         <button
           type="button"
-          className="secondary-button amazon-select-candidate"
-          onClick={onSelect}
-          aria-label={selected ? `${displayTitle} is selected` : `Use ${displayTitle} as the Amazon match`}
-          aria-pressed={selected}
+          className="secondary-button amazon-candidate-toggle"
+          aria-expanded={isExpanded}
+          aria-controls={detailsId}
+          onClick={toggleDetails}
         >
-          {selected ? "Selected" : "Use this listing"}
+          {isExpanded ? "Hide details" : "View full details"}
         </button>
+      </div>
+      <div
+        id={detailsId}
+        className="amazon-candidate-popover"
+        style={{
+          position: "static",
+          inset: "auto",
+          width: "100%",
+          maxHeight: "none",
+          overflow: "visible",
+          marginTop: 8,
+          transform: "none",
+        }}
+        role="region"
+        aria-label={`Full details for ${displayTitle}`}
+        hidden={!isExpanded}
+      >
+        <div className="amazon-candidate-popover-heading">
+          <p className="amazon-compare-label">AMAZON LISTING DETAILS</p>
+          {selected ? <span className="amazon-top-match-label">Top match</span> : null}
+        </div>
+        <p className="amazon-candidate-title-full">{displayTitle}</p>
+        {candidate.amazonTitle && candidate.amazonTitle !== candidate.title ? (
+          <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
+        ) : null}
+        <p className="amazon-candidate-detail">
+          <span><strong>Shipper / seller:</strong> {sellerValue}</span>
+          <span><strong>Amazon listing price:</strong> {candidate.price || "Not found"}</span>
+          <span><strong>Pack quantity in listing:</strong> {candidate.amazonPackCount ?? "Not identified"}</span>
+          <span><strong>ASIN:</strong> {candidate.asin || "Not available"}</span>
+        </p>
+        {candidate.amazonUnitPrice || candidate.supplierPackEquivalentPrice ? (
+          <div className="amazon-unit-price">
+            {candidate.amazonUnitPrice ? (
+              <span><strong>Amazon price per item:</strong> {candidate.amazonUnitPrice}</span>
+            ) : null}
+            {candidate.supplierPackEquivalentPrice && result.pack ? (
+              <span><strong>At supplier pack size ({result.pack}):</strong> {candidate.supplierPackEquivalentPrice}</span>
+            ) : null}
+            <small>Estimated from the listing price and pack count in the title (assumed one item when omitted).</small>
+          </div>
+        ) : null}
+        <AttributeMatchSummary result={result} candidate={candidate} />
+        <div className="amazon-candidate-scores" aria-label="Independent match scores">
+          <ScoreMetric label="Title match" percentage={typeof candidate.titleWordCoverage === "number" ? candidate.titleWordCoverage * 100 : null} />
+          <ScoreMetric
+            label="Image match"
+            percentage={typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore : null}
+            emptyLabel="Check failed"
+            help="Visual evidence is required; an unavailable or inconclusive image check cannot confirm this listing."
+          />
+        </div>
+        {candidate.visualReason ? <p className="amazon-candidate-visual-reason">{candidate.visualReason}</p> : null}
+        {candidate.listingDetailsMessage ? <p className="amazon-details-message" role="status">{candidate.listingDetailsMessage}</p> : null}
+        <div className="amazon-candidate-actions">
+          <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
+            Open listing <ExternalLink size={13} aria-hidden="true" />
+          </a>
+          <AmazonDetailsButton candidate={candidate} sourceTitle={sourceTitle} onDetails={onDetails} />
+          <button
+            type="button"
+            className="secondary-button amazon-select-candidate"
+            onClick={onSelect}
+            aria-label={selected ? `${displayTitle} is selected` : `Use ${displayTitle} as the Amazon match`}
+            aria-pressed={selected}
+          >
+            {selected ? "Selected" : "Use this listing"}
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -344,6 +426,7 @@ export function AmazonMatchCard({
   isVisualRetryBusy,
 }: AmazonMatchCardProps) {
   const candidate = result.bestCandidate;
+  const candidateOptions = result.candidates.length ? result.candidates : candidate ? [candidate] : [];
   const isReview = result.status === "medium" || result.status === "low";
   const needsVisualRetry = Boolean(
     result.regalImageUrl && result.candidates.some((option) => typeof option.imageMatchScore !== "number"),
@@ -395,138 +478,27 @@ export function AmazonMatchCard({
         </div>
       ) : result.status === "blocked" || result.status === "error" ? (
         <p className="amazon-result-message" role={result.status === "blocked" ? "status" : "alert"}>{result.message}</p>
-      ) : candidate ? (
-        <>
-          <div className="amazon-compare-grid">
-            <section className="amazon-compare-panel" aria-label="Supplier product to match">
-              <p className="amazon-compare-label">SUPPLIER IMAGE TO MATCH</p>
-              <ImageFrame
-                src={result.regalImageUrl}
-                alt={`Supplier product image for ${result.title || result.ean}`}
-                label={result.regalImageUrl ? "Regal Sales image" : "Image unavailable"}
-              />
-              <p className="amazon-compare-label amazon-source-title-label">TITLE TO MATCH</p>
-              <p className="amazon-compare-title">{result.title || "No title in source file"}</p>
-              {result.imageTerms ? <p className="amazon-label-text"><strong>Label read:</strong> {result.imageTerms}</p> : null}
-              <p className="amazon-compare-detail">{[result.brand, result.variant, result.size, result.pack && `Pack ${result.pack}`].filter(Boolean).join(" · ") || "No additional source details supplied"}</p>
-              {!result.regalImageUrl ? (
-                <p className="amazon-source-image-warning" role="status">
-                  Image matching is required, but no supplier image was available for this row.
-                </p>
-              ) : null}
-            </section>
-            <section className="amazon-compare-panel" aria-label="Amazon UK candidate">
-              <div className="amazon-compare-heading">
-                <p className="amazon-compare-label">AMAZON UK CANDIDATE</p>
-                <div className="amazon-match-score-list" aria-label="Independent match scores">
-                  <ScoreMetric label="Title match" percentage={typeof candidate.titleWordCoverage === "number" ? candidate.titleWordCoverage * 100 : null} />
-                  <ScoreMetric
-                    label="Image match"
-                    percentage={typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore : null}
-                    emptyLabel="Check failed"
-                    help="Visual evidence is required; an unavailable or inconclusive image check cannot confirm this listing."
-                  />
-                </div>
-              </div>
-              <ImageFrame
-                src={candidate.imageUrl}
-                alt={`Amazon listing image: ${candidate.amazonTitle || candidate.title}`}
-                label="Amazon listing"
-              />
-              <p className="amazon-compare-title">{candidate.amazonTitle || candidate.title}</p>
-              {candidate.amazonTitle && candidate.amazonTitle !== candidate.title ? (
-                <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
-              ) : null}
-              <p className="amazon-compare-detail">
-                <span><strong>Shipper / seller:</strong> {candidate.seller || (candidate.listingDetailsChecked ? "Not shown" : "Not checked")}</span>
-                <span><strong>Price:</strong> {candidate.price || "Not found"}</span>
-                <span>ASIN {candidate.asin || "not available"}</span>
-              </p>
-              <AttributeMatchSummary result={result} candidate={candidate} />
-              {candidate.listingDetailsMessage ? <p className="amazon-details-message" role="status">{candidate.listingDetailsMessage}</p> : null}
-              <div className="amazon-listing-actions">
-                <AmazonDetailsButton
-                  candidate={candidate}
-                  sourceTitle={sourceTitle}
-                  onDetails={(updated) => onCandidateDetails(result.rowNumber, updated)}
-                />
-                <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
-                  Open listing <ExternalLink size={13} aria-hidden="true" />
-                </a>
-              </div>
-              {candidate.visualVerdict ? <p className="amazon-visual-verdict">AI visual check: {visualLabels[candidate.visualVerdict]}</p> : null}
-            </section>
-          </div>
-
-          {result.candidates.length > 1 ? (
-            <section className="amazon-candidate-section" aria-label="Similar Amazon listings">
-              <div className="amazon-candidate-heading">
-                <div>
-                  <h4>Top Amazon options</h4>
-                  <p>Title and image scores are separate. Compare the full listing details before choosing.</p>
-                </div>
-                <span>{result.candidates.length} options</span>
-              </div>
-              <div className="amazon-candidate-grid">
-                {result.candidates.map((option) => (
-                  <CandidateOption
-                    key={option.asin || option.productUrl || option.title}
-                    candidate={option}
-                    selected={candidate.asin === option.asin && candidate.productUrl === option.productUrl && candidate.title === option.title}
-                    fallbackSearchUrl={amazonSearchUrl(result)}
-                    sourceTitle={sourceTitle}
-                    result={result}
-                    onDetails={(updated) => onCandidateDetails(result.rowNumber, updated)}
-                    onSelect={() => onCandidateSelect(result.rowNumber, option)}
-                  />
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          <div className="amazon-result-bottomline">
-            <p className="amazon-match-reason">{candidate.reason}</p>
-            {isReview ? (
-              <div className="amazon-review-actions" aria-label="Review match">
-                <button
-                  type="button"
-                  className={`secondary-button amazon-review-button${result.decision === "confirmed" ? " is-selected" : ""}`}
-                  onClick={() => onDecision(result.rowNumber, "confirmed")}
-                  aria-pressed={result.decision === "confirmed"}
-                >
-                  <Check size={14} aria-hidden="true" /> Confirm
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button amazon-review-button${result.decision === "rejected" ? " is-rejected" : ""}`}
-                  onClick={() => onDecision(result.rowNumber, "rejected")}
-                  aria-pressed={result.decision === "rejected"}
-                >
-                  <X size={14} aria-hidden="true" /> Reject
-                </button>
-              </div>
-            ) : (
-              <span className="amazon-auto-note">{result.status === "high" ? "EAN evidence found" : "No manual review needed"}</span>
-            )}
-          </div>
-        </>
-      ) : result.candidates.length ? (
+      ) : candidateOptions.length ? (
         <>
           <SourceProductReference result={result} />
-          <section className="amazon-candidate-section" aria-label="Amazon options for manual review">
+          <section className="amazon-candidate-section" aria-label="Amazon listing matches">
             <div className="amazon-candidate-heading">
               <div>
-                <h4>No confident match yet</h4>
-                <p>{result.message || "No listing passed both the title and image checks. Review the options below."}</p>
+                <h4>{candidate ? "Top Amazon matches" : "No confident match yet"}</h4>
+                <p>
+                  {candidate
+                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings before ranking. Images lead the ranking; title, size, and pack checks remain visible. Pack prices are normalized for comparison.`
+                    : result.message || "Review the closest Amazon listings below."}
+                </p>
               </div>
-              <span>{result.candidates.length} options</span>
+              <span>Top {candidateOptions.length} of {result.scannedCandidateCount ?? candidateOptions.length} scanned</span>
             </div>
             <div className="amazon-candidate-grid">
-              {result.candidates.map((option) => (
+              {candidateOptions.map((option) => (
                 <CandidateOption
                   key={option.asin || option.productUrl || option.title}
                   candidate={option}
-                  selected={false}
+                  selected={Boolean(candidate && candidate.asin === option.asin && candidate.productUrl === option.productUrl && candidate.title === option.title)}
                   fallbackSearchUrl={amazonSearchUrl(result)}
                   sourceTitle={sourceTitle}
                   result={result}
@@ -536,6 +508,33 @@ export function AmazonMatchCard({
               ))}
             </div>
           </section>
+          {candidate ? (
+            <div className="amazon-result-bottomline">
+              <p className="amazon-match-reason">{candidate.reason}</p>
+              {isReview ? (
+                <div className="amazon-review-actions" aria-label="Review match">
+                  <button
+                    type="button"
+                    className={`secondary-button amazon-review-button${result.decision === "confirmed" ? " is-selected" : ""}`}
+                    onClick={() => onDecision(result.rowNumber, "confirmed")}
+                    aria-pressed={result.decision === "confirmed"}
+                  >
+                    <Check size={14} aria-hidden="true" /> Confirm
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-button amazon-review-button${result.decision === "rejected" ? " is-rejected" : ""}`}
+                    onClick={() => onDecision(result.rowNumber, "rejected")}
+                    aria-pressed={result.decision === "rejected"}
+                  >
+                    <X size={14} aria-hidden="true" /> Reject
+                  </button>
+                </div>
+              ) : (
+                <span className="amazon-auto-note">{result.status === "high" ? "EAN evidence found" : "No manual review needed"}</span>
+              )}
+            </div>
+          ) : null}
         </>
       ) : (
         <p className="amazon-result-message">{result.message || "The result is ready for review."}</p>

@@ -265,6 +265,61 @@ test("unavailable image checks never produce a confident title-only match", asyn
   assert.match(result.candidates[0].visualReason, /supplier image could not be loaded/i);
 });
 
+test("all returned listings are image-checked in bounded batches before choosing the top five", async () => {
+  const product = {
+    ean: "",
+    title: "Nivea Men Sensitive Shower Gel",
+    brand: "Nivea Men",
+    variant: "",
+    size: "250ml",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const candidates = Array.from({ length: 7 }, (_, index) =>
+    candidate(`Nivea Men Sensitive Shower Gel 250ml Option ${index + 1}`, {
+      asin: `B000VIS0${index + 1}`,
+      packMatch: index === 6 ? false : true,
+      amazonPackCount: index === 6 ? 1 : 2,
+      amazonUnitPrice: "£2.00",
+      supplierPackEquivalentPrice: "£12.00",
+    }),
+  );
+  const originalFetch = globalThis.fetch;
+  const batches = [];
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(init.body);
+    batches.push(payload.candidates.length);
+    const offset = batches.length === 1 ? 0 : 5;
+    return new Response(
+      JSON.stringify({
+        evaluations: payload.candidates.map((_, index) => ({
+          index,
+          verdict: offset + index === 6 ? "strong" : "different",
+          imageMatchScore: offset + index === 6 ? 96 : 18,
+          reason: offset + index === 6 ? "The label and bottle shape align." : "The package differs.",
+        })),
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await verifyAmazonCandidates(product, matchResponse(candidates));
+
+    assert.deepEqual(batches, [5, 2]);
+    assert.equal(result.scannedCandidateCount, 7);
+    assert.equal(result.candidates.length, 5);
+    assert.equal(result.candidates[0].asin, candidates[6].asin);
+    assert.equal(result.bestCandidate.asin, candidates[6].asin);
+    assert.equal(result.bestCandidate.tier, "medium");
+    assert.equal(result.bestCandidate.packMatch, false);
+    assert.equal(result.bestCandidate.supplierPackEquivalentPrice, "£12.00");
+    assert.match(result.bestCandidate.reason, /pack count also needs review/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("all five low-overlap Amazon options remain available for manual selection", async () => {
   const product = {
     ean: "",

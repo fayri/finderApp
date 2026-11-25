@@ -125,6 +125,7 @@ export function AmazonSingleItemTest() {
         message: imageAnalysisWarning ? `${verifiedMatch.message} ${imageAnalysisWarning}` : verifiedMatch.message,
         bestCandidate: verifiedMatch.bestCandidate,
         candidates: verifiedMatch.candidates ?? [],
+        scannedCandidateCount: match.scannedCandidateCount ?? match.candidates.length,
         decision: null,
       });
     } catch (error) {
@@ -183,6 +184,7 @@ export function AmazonSingleItemTest() {
         regalImageUrl: result.regalImageUrl,
         bestCandidate: null,
         candidates: result.candidates,
+        scannedCandidateCount: result.scannedCandidateCount,
         searchedQueries: [],
       };
       const verified = await verifyAmazonCandidates(result, response);

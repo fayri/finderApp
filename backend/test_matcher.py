@@ -201,6 +201,87 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(results[0]["title"], "Spontex Heavy Duty Scourer Pads, 3 Count")
         self.assertEqual(results[0]["seller"], "Amazon.co.uk")
 
+    def test_search_result_parser_extracts_every_listing_on_the_page(self):
+        listings = "".join(
+            f'''<div data-component-type="s-search-result" data-asin="B00000{index:04d}">
+              <h2><a href="/dp/B00000{index:04d}">Nivea Men Sensitive Shower Gel 250ml Pack of {index}</a></h2>
+              <img class="s-image" src="https://m.media-amazon.com/images/I/item-{index}.jpg" />
+            </div>'''
+            for index in range(1, 13)
+        )
+
+        results = extract_amazon_candidates(listings, "")
+
+        self.assertEqual(len(results), 12)
+        self.assertEqual(results[-1]["asin"], "B000000012")
+
+    def test_search_result_without_an_image_is_kept_for_title_review(self):
+        html = '''
+        <div data-component-type="s-search-result" data-asin="B012345678">
+          <h2><a href="/dp/B012345678">Northstar Hand Cream 250ml</a></h2>
+          <img class="s-image" alt="Product photo unavailable" />
+        </div>
+        '''
+
+        results = extract_amazon_candidates(html, "")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Northstar Hand Cream 250ml")
+        self.assertEqual(results[0]["imageUrl"], "")
+
+    def test_single_amazon_item_gets_supplier_pack_equivalent_price(self):
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
+        candidate = {
+            "title": "Nivea Men Sensitive Shower Gel 250ml",
+            "cardText": "Nivea Men Sensitive Shower Gel 250ml",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "price": "£2.00",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertFalse(result["packMatch"])
+        self.assertEqual(result["amazonPackCount"], 1)
+        self.assertEqual(result["amazonUnitPrice"], "£2.00")
+        self.assertEqual(result["supplierPackEquivalentPrice"], "£12.00")
+
+    def test_multipack_price_is_normalized_to_an_individual_item(self):
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
+        candidate = {
+            "title": "Nivea Men Sensitive Shower Gel 4 x 250ml",
+            "cardText": "Nivea Men Sensitive Shower Gel 4 x 250ml",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "price": "£8.95",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertEqual(result["amazonPackCount"], 4)
+        self.assertEqual(result["amazonUnitPrice"], "£2.24")
+        self.assertEqual(result["supplierPackEquivalentPrice"], "£13.43")
+
+    def test_lookup_scans_the_full_first_relevant_result_page(self):
+        candidates = [
+            {
+                "asin": f"B00000{index:04d}",
+                "title": f"Nivea Men Sensitive Shower Gel 250ml Pack of {index}",
+                "cardText": f"Nivea Men Sensitive Shower Gel 250ml Pack of {index}",
+                "imageUrl": f"https://m.media-amazon.com/images/I/item-{index}.jpg",
+                "productUrl": f"https://www.amazon.co.uk/dp/B00000{index:04d}",
+                "price": "£2.00",
+            }
+            for index in range(1, 13)
+        ]
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
+
+        with patch("main.search_amazon", return_value=candidates) as search, patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        search.assert_called_once()
+        self.assertEqual(result["scannedCandidateCount"], 12)
+        self.assertEqual(len(result["candidates"]), 12)
+        self.assertTrue(any(candidate["amazonPackCount"] == 1 for candidate in result["candidates"]))
+
     def test_product_page_parser_extracts_full_title_seller_and_current_price(self):
         html = '''
         <span id="productTitle">Spontex Heavy Duty Scourer Pads, Pack of 3</span>

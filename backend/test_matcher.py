@@ -96,11 +96,25 @@ class MatcherTests(unittest.TestCase):
 
         queries = build_search_queries(product)
 
-        image_query = next(query for stage, query in queries if stage == "image")
+        self.assertEqual(queries[0][0], "image")
+        image_query = queries[0][1]
         self.assertIn("Carex Antibacterial Sensitive Handwash", image_query)
-        self.assertIn("purple pump bottle", image_query)
+        self.assertIn("purple pump bottle sensitive", image_query)
         self.assertIn("250ml", image_query)
         self.assertIn("1", image_query)
+
+    def test_label_terms_improve_candidate_title_matching(self):
+        product = MatchRequest(title="Hand Wash", image_terms="Carex Antibacterial Sensitive", brand="Carex")
+        candidate = {
+            "title": "Carex Antibacterial Sensitive Hand Wash 250ml",
+            "cardText": "Carex Antibacterial Sensitive Hand Wash 250ml",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertEqual(result["tier"], "medium")
+        self.assertGreater(result["titleScore"], 0.7)
 
     def test_size_uncertainty_is_low_match(self):
         product = MatchRequest(title="Hydrating Hand Cream", brand="Northstar", size="250 ml")

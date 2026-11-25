@@ -53,7 +53,7 @@ interface MappedProduct extends AmazonProductInput {
 interface AmazonProgress {
   completed: number;
   total: number;
-  activeProducts: Array<{ key: string; title: string }>;
+  activeProducts: Array<{ key: string; title: string; stage: "label" | "search" }>;
 }
 
 const initialProgress: AmazonProgress = { completed: 0, total: 0, activeProducts: [] };
@@ -117,6 +117,48 @@ function uniqueProducts(products: MappedProduct[]): MappedProduct[] {
   return Array.from(unique.values());
 }
 
+async function readImageLabelText(
+  product: AmazonProductInput,
+  signal: AbortSignal,
+): Promise<{ imageTerms: string; warning: string }> {
+  if (!product.regalImageUrl) return { imageTerms: "", warning: "" };
+
+  try {
+    const response = await fetch("/api/amazon/image-query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: product.title,
+        size: product.size,
+        pack: product.pack,
+        imageUrl: product.regalImageUrl,
+      }),
+      signal,
+    });
+    const payload = (await response.json().catch(() => null)) as { labelText?: unknown } | null;
+    if (!response.ok || !payload || typeof payload.labelText !== "string") {
+      return {
+        imageTerms: "",
+        warning: "Image label reading was unavailable; matching continued with the supplied product details.",
+      };
+    }
+
+    const imageTerms = payload.labelText.replace(/\s+/g, " ").trim().slice(0, 180);
+    return {
+      imageTerms,
+      warning: imageTerms
+        ? ""
+        : "No readable product-label text was found; matching continued with the supplied product details.",
+    };
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return {
+      imageTerms: "",
+      warning: "Image label reading was unavailable; matching continued with the supplied product details.",
+    };
+  }
+}
+
 function emptyRow(product: MappedProduct, status: AmazonMatchStatus, message: string): AmazonMatchRow {
   return {
     ...product,
@@ -140,6 +182,7 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
     "EAN",
     "Brand",
     "Product",
+    "Image label text",
     "Variant",
     "Source size",
     "Pack",
@@ -149,7 +192,7 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
     "Amazon ASIN",
     "Amazon price",
     "AI visual review",
-    "Source title word match",
+    "Source product text match",
     "Amazon URL",
     "Match notes",
   ];
@@ -159,6 +202,7 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
       result.ean,
       result.brand,
       result.title,
+      result.imageTerms ?? "",
       result.variant,
       result.size,
       result.pack,
@@ -318,10 +362,23 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           let completedProduct = false;
           setProgress((current) => ({
             ...current,
-            activeProducts: [...current.activeProducts, { key: product.key, title: product.title || product.ean }],
+            activeProducts: [
+              ...current.activeProducts,
+              { key: product.key, title: product.title || product.ean, stage: product.regalImageUrl ? "label" : "search" },
+            ],
           }));
 
           try {
+            const labelResult = await readImageLabelText(product, controller.signal);
+            if (controller.signal.aborted) return;
+            const matchProduct = { ...product, imageTerms: labelResult.imageTerms };
+            setProgress((current) => ({
+              ...current,
+              activeProducts: current.activeProducts.map((activeProduct) =>
+                activeProduct.key === product.key ? { ...activeProduct, stage: "search" } : activeProduct,
+              ),
+            }));
+
             const response = await fetch("/api/amazon/match", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -333,6 +390,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                 size: product.size,
                 pack: product.pack,
                 category: product.category,
+                image_terms: matchProduct.imageTerms,
                 regal_image_url: product.regalImageUrl,
               }),
               signal: controller.signal,
@@ -344,12 +402,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             }
 
             const matchPayload = payload as AmazonMatchResponse;
-            const verifiedMatch = await verifyAmazonCandidates(product, matchPayload, controller.signal);
+            const verifiedMatch = await verifyAmazonCandidates(matchProduct, matchPayload, controller.signal);
             if (controller.signal.aborted) return;
             const rowResult: AmazonMatchRow = {
-              ...product,
+              ...matchProduct,
               status: verifiedMatch.status,
-              message: verifiedMatch.message,
+              message: [verifiedMatch.message, labelResult.warning].filter(Boolean).join(" "),
               regalImageUrl: verifiedMatch.regalImageUrl || product.regalImageUrl,
               bestCandidate: verifiedMatch.bestCandidate,
               candidates: verifiedMatch.candidates ?? [],
@@ -429,6 +487,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const highCount = results.filter((result) => result.status === "high").length;
   const reviewCount = results.filter((result) => result.status === "medium" || result.status === "low").length;
   const notFoundCount = results.filter((result) => result.status === "not-found").length;
+  const activeLabelCount = progress.activeProducts.filter((product) => product.stage === "label").length;
+  const activeSearchCount = progress.activeProducts.filter((product) => product.stage === "search").length;
+  const activeProgressLabel = [
+    activeLabelCount ? `Reading labels for ${activeLabelCount}` : "",
+    activeSearchCount ? `Searching Amazon for ${activeSearchCount}` : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <main className="page-shell amazon-page">
@@ -533,7 +597,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               <span className="upload-format-note">.xlsx or .csv · up to 5 MB</span>
             </div>
           )}
-          <p className="privacy-note">Files stay in this browser. Only mapped product fields and a source image URL are sent to the matcher.</p>
+          <p className="privacy-note">Files stay in this browser. Mapped product fields and source image URLs are sent to the matcher; linked images may be analyzed by AI to read label text.</p>
         </section>
 
         {source && mapping ? (
@@ -582,7 +646,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                 <span className="progress-spinner"><Clock3 size={15} /></span>
                 <div>
                   <strong>Searching Amazon UK</strong>
-                  <span>{progress.activeProducts.length ? `Processing ${progress.activeProducts.length} ${progress.activeProducts.length === 1 ? "product" : "products"} in parallel` : "Preparing Amazon search queries"}</span>
+                  <span>{activeProgressLabel || "Preparing Amazon search queries"}</span>
                 </div>
               </div>
               <button type="button" className="text-button" onClick={() => controllerRef.current?.abort()}>Stop</button>

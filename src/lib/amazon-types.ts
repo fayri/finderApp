@@ -9,6 +9,7 @@ export interface AmazonProductInput {
   size: string;
   pack: string;
   regalImageUrl: string;
+  imageTerms?: string;
 }
 
 export type AmazonVisualVerdict = "strong" | "possible" | "different" | "uncertain" | "unavailable";

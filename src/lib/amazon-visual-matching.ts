@@ -121,7 +121,7 @@ async function requestVisualEvaluations(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: product.title,
+        title: [product.title, product.imageTerms].filter(Boolean).join(" "),
         brand: product.brand,
         variant: product.variant,
         size: product.size,
@@ -185,12 +185,12 @@ function reasonForCandidate(
     return `The EAN appears exactly in the Amazon result text.${mismatchText}`;
   }
   if (verdict === "strong" && mismatches.length === 0) {
-    return `Strong visual evidence: ${visualReason}${titlePercent < 90 ? ` Only ${titlePercent}% of meaningful source-title words overlap, so verify the label and variant before confirming.` : ""}`;
+    return `Strong visual evidence: ${visualReason}${titlePercent < 90 ? ` Only ${titlePercent}% of meaningful source product words overlap, so verify the label and variant before confirming.` : ""}`;
   }
   if (verdict === "different") {
-    return `The image review conflicts with the title match: ${visualReason} The listing is retained for manual review because ${titlePercent}% of meaningful source-title words overlap.${mismatchText}`;
+    return `The image review conflicts with the title match: ${visualReason} The listing is retained for manual review because ${titlePercent}% of meaningful source product words overlap.${mismatchText}`;
   }
-  return `The visual review was ${verdict === "unavailable" ? "unavailable" : "inconclusive"}; ${titlePercent}% of meaningful source-title words overlap.${mismatchText} Compare the label, variant, size, and pack before confirming.`;
+  return `The visual review was ${verdict === "unavailable" ? "unavailable" : "inconclusive"}; ${titlePercent}% of meaningful source product words overlap.${mismatchText} Compare the label, variant, size, and pack before confirming.`;
 }
 
 function candidateRank(candidate: AmazonSearchCandidate): [number, number, number, number] {
@@ -227,7 +227,7 @@ export async function verifyAmazonCandidates(
 
   candidates.forEach((candidate, index) => {
     const evaluation = evaluations[index] ?? evaluationFallback(index);
-    const sourceTitle = [product.brand, product.title, product.variant].filter(Boolean).join(" ");
+    const sourceTitle = [product.brand, product.title, product.imageTerms, product.variant].filter(Boolean).join(" ");
     const coverage = titleWordCoverage(sourceTitle, candidate.title);
     const exactEan = candidate.eanMatch;
     const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidate.title);

@@ -28,9 +28,7 @@ const statusLabels = {
 } as const;
 
 function amazonSearchUrl(result: AmazonMatchRow): string {
-  const query = [result.ean, result.brand, result.title, result.variant, result.size, result.pack]
-    .filter(Boolean)
-    .join(" ");
+  const query = [result.title, result.imageTerms].filter(Boolean).join(" ");
   return buildAmazonSearchUrl(query);
 }
 
@@ -94,8 +92,12 @@ function CandidateOption({
       <p className="amazon-candidate-title" title={candidate.title}>{candidate.title}</p>
       <p className="amazon-candidate-detail">
         {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
-        {typeof candidate.titleWordCoverage === "number" ? ` · Title words ${Math.round(candidate.titleWordCoverage * 100)}%` : ""}
       </p>
+      {typeof candidate.titleWordCoverage === "number" ? (
+        <p className="amazon-candidate-coverage">
+          <strong>{Math.round(candidate.titleWordCoverage * 100)}%</strong> product text
+        </p>
+      ) : null}
       {candidate.visualReason ? <p className="amazon-candidate-visual-reason">{candidate.visualReason}</p> : null}
       <div className="amazon-candidate-actions">
         <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
@@ -168,10 +170,19 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
                 label="Source image"
               />
               <p className="amazon-compare-title">{result.title || "No title in source file"}</p>
+              {result.imageTerms ? <p className="amazon-label-text"><strong>Label read:</strong> {result.imageTerms}</p> : null}
               <p className="amazon-compare-detail">{[result.brand, result.variant, result.size, result.pack && `Pack ${result.pack}`].filter(Boolean).join(" · ") || "No additional source details supplied"}</p>
             </section>
             <section className="amazon-compare-panel" aria-label="Amazon UK candidate">
-              <p className="amazon-compare-label">AMAZON UK CANDIDATE</p>
+              <div className="amazon-compare-heading">
+                <p className="amazon-compare-label">AMAZON UK CANDIDATE</p>
+                {typeof candidate.titleWordCoverage === "number" ? (
+                  <div className="amazon-match-percentage" aria-label={`Source product text match ${Math.round(candidate.titleWordCoverage * 100)} percent`}>
+                    <strong>{Math.round(candidate.titleWordCoverage * 100)}%</strong>
+                    <span>Product text</span>
+                  </div>
+                ) : null}
+              </div>
               <ImageFrame
                 src={candidate.imageUrl}
                 alt={`Amazon listing image: ${candidate.title}`}
@@ -181,7 +192,6 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
               <p className="amazon-compare-detail">
                 {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
                 {candidate.visualVerdict ? ` · AI visual check: ${visualLabels[candidate.visualVerdict]}` : ""}
-                {typeof candidate.titleWordCoverage === "number" ? ` · Source title words: ${Math.round(candidate.titleWordCoverage * 100)}%` : ""}
               </p>
               <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
                 Open listing <ExternalLink size={13} aria-hidden="true" />

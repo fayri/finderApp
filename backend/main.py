@@ -147,7 +147,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     candidate_title = normalize_text(str(candidate.get("title", "")))
     listing_text = str(candidate.get("cardText", ""))
     candidate_tokens = tokens(candidate_title)
-    product_tokens = tokens(clean_title(product.title))
+    product_tokens = tokens(clean_title(" ".join(part for part in (product.title, product.image_terms) if part)))
     brand_tokens = tokens(clean_title(product.brand))
     variant_tokens = tokens(clean_title(product.variant))
 
@@ -225,7 +225,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         if not brand_match:
             reason = "The source brand is not present in this listing; it is retained among the top Amazon options for manual review."
         elif not title_match:
-            reason = f"Only {overlap_percent}% of source-title words overlap; this listing is retained among the top Amazon options for manual review."
+            reason = f"Only {overlap_percent}% of source product words overlap; this listing is retained among the top Amazon options for manual review."
         else:
             reason = "Some product details differ; this listing is retained among the top Amazon options for manual review."
 
@@ -492,10 +492,24 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     detailed = clean_title(" ".join(part for part in (product.brand, product.title, product.variant, product.size, product.pack) if part))
     category = CATEGORY_DICTIONARY.get(product.category, {})
     category_terms = [*category.get("queryTerms", []), *category.get("searchTerms", [])]
-    staged_queries: list[tuple[str, str]] = [("detail", detailed)]
+    staged_queries: list[tuple[str, str]] = []
     if product.image_terms:
-        image_query = clean_title(" ".join(part for part in (product.title, product.image_terms, product.size, product.pack) if part))
+        image_query = clean_title(
+            " ".join(
+                part
+                for part in (
+                    product.brand,
+                    product.title,
+                    product.image_terms,
+                    product.variant,
+                    product.size,
+                    product.pack,
+                )
+                if part
+            )
+        )
         staged_queries.append(("image", image_query))
+    staged_queries.append(("detail", detailed))
     for term in category_terms:
         category_query = clean_title(f"{detailed} {term}")
         staged_queries.append(("category", category_query))

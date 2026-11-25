@@ -9,7 +9,7 @@ import { verifyAmazonCandidates } from "@/lib/amazon-visual-matching";
 import type { AmazonMatchResponse, AmazonMatchRow, AmazonProductInput, AmazonSearchCandidate } from "@/lib/amazon-types";
 
 interface ImageQueryResponse {
-  query?: string;
+  labelText?: string;
   error?: string;
 }
 
@@ -38,7 +38,7 @@ export function AmazonSingleItemTest() {
       return;
     }
 
-    const initialSearchQuery = [productTitle, productSize, productPack].filter(Boolean).join(" ");
+    const initialSearchQuery = productTitle;
     setSearchUrl(initialSearchQuery ? buildAmazonSearchUrl(initialSearchQuery) : "");
     setErrorMessage("");
     setResult(null);
@@ -56,14 +56,17 @@ export function AmazonSingleItemTest() {
           body: JSON.stringify({ title: productTitle, size: productSize, pack: productPack, imageUrl: productImageUrl }),
         });
         const imagePayload = (await imageResponse.json().catch(() => null)) as ImageQueryResponse | null;
-        if (!imageResponse.ok || !imagePayload?.query) {
-          const imageError = getApiErrorMessage(imagePayload, "Image analysis is unavailable.", imageResponse.status);
+        if (!imageResponse.ok || !imagePayload) {
+          const imageError = getApiErrorMessage(imagePayload, "Image label reading is unavailable.", imageResponse.status);
           if (!productTitle) {
             throw new Error(`${imageError}. Add a title to create an Amazon UK search URL.`);
           }
-          imageAnalysisWarning = `Image analysis was unavailable (${imageError}); the title, size, and pack were still searched.`;
+          imageAnalysisWarning = `Image label reading was unavailable (${imageError}); the title, size, and pack were still searched.`;
         } else {
-          imageTerms = imagePayload.query.trim();
+          imageTerms = typeof imagePayload.labelText === "string" ? imagePayload.labelText.trim() : "";
+          if (!imageTerms) {
+            imageAnalysisWarning = "No readable product-label text was found; the supplied title, size, and pack were still searched.";
+          }
         }
       }
 
@@ -72,10 +75,8 @@ export function AmazonSingleItemTest() {
         throw new Error("The image did not provide searchable product details. Add the product title to continue.");
       }
 
-      const primarySearchQuery = [searchTitle, productSize, productPack].filter(Boolean).join(" ");
-      setSearchPhrase(
-        imageTerms && productTitle ? `${primarySearchQuery} · Image details: ${imageTerms}` : primarySearchQuery,
-      );
+      const primarySearchQuery = [productTitle, imageTerms].filter(Boolean).join(" ");
+      setSearchPhrase(primarySearchQuery);
       setSearchUrl(buildAmazonSearchUrl(primarySearchQuery));
       setStage("search");
       const matchResponse = await fetch("/api/amazon/match", {
@@ -109,6 +110,7 @@ export function AmazonSingleItemTest() {
         size: productSize,
         pack: productPack,
         regalImageUrl: productImageUrl,
+        imageTerms,
       };
       const verifiedMatch = await verifyAmazonCandidates(sourceProduct, match);
       setResult({
@@ -237,7 +239,7 @@ export function AmazonSingleItemTest() {
         </div>
         <div className="single-item-test-actions">
           <p id="single-item-image-note" className="single-item-test-note">
-            Images must be public HTTPS links and 5 MB or smaller. The image adds search details; size and pack are checked against the listing.
+            Images must be public HTTPS links and 5 MB or smaller. Readable label text is added to the title search; size and pack are checked against the listing.
           </p>
           <button type="submit" className="primary-button single-item-test-button" disabled={isRunning}>
             {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}

@@ -563,7 +563,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Category is only a search-expansion hint and cannot qualify a result. Product identity is checked using distinctive title words and package imagery; if visual evidence is unclear, at least 90% of distinctive title words (minimum two) must match. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Category is only a search-expansion hint and does not increase confidence by itself. The top five Amazon listings are kept for your review, including options with low title overlap; title, brand, package, and image signals affect ranking and confidence only. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>
@@ -623,7 +623,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               ))}
             </div>
             <p className="results-disclaimer amazon-disclaimer">
-              AI visual review prioritizes package shape and dominant color, with title and label details as identity evidence; category overlap alone is never enough. If visual review is unavailable or inconclusive, at least 90% of distinctive source-title words must match (at least two words; generic category terms do not count). High matches require an exact EAN in the Amazon result text; medium and low matches remain reviewable.
+              AI visual review prioritizes package shape and dominant color, with title and label details as identity evidence. The top five Amazon listings are retained even below 90% title overlap, and those low-confidence options always require your manual review. High matches require an exact EAN in the Amazon result text.
             </p>
           </>
         ) : (

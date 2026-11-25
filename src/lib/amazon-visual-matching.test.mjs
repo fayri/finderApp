@@ -87,7 +87,7 @@ async function withVisualEvaluations(evaluations, callback) {
   }
 }
 
-test("visual conflict rejects a category-level title candidate while retaining the true item", async () => {
+test("visual conflicts stay visible for review while the stronger item ranks first", async () => {
   const product = {
     ean: "",
     title: "Imperial Leather Bath Muscle Soak Bergamot",
@@ -112,13 +112,16 @@ test("visual conflict rejects a category-level title candidate while retaining t
     () => verifyAmazonCandidates(product, matchResponse([unrelated, intended])),
   );
 
-  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates.length, 2);
   assert.equal(result.bestCandidate.title, intended.title);
   assert.equal(result.bestCandidate.tier, "medium");
   assert.equal(result.bestCandidate.visualVerdict, "strong");
+  assert.equal(result.candidates[1].title, unrelated.title);
+  assert.equal(result.candidates[1].tier, "low");
+  assert.equal(result.candidates[1].visualVerdict, "different");
 });
 
-test("inconclusive imagery keeps candidates only when distinctive title terms meet the fallback", async () => {
+test("inconclusive imagery retains low-overlap options from the search results", async () => {
   const product = {
     ean: "",
     title: "Imperial Leather Bath Muscle Soak Bergamot",
@@ -139,7 +142,42 @@ test("inconclusive imagery keeps candidates only when distinctive title terms me
     () => verifyAmazonCandidates(product, matchResponse([closeTitle, categoryOnly])),
   );
 
-  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates.length, 2);
   assert.equal(result.bestCandidate.title, closeTitle.title);
   assert.equal(result.bestCandidate.visualVerdict, "uncertain");
+  assert.ok(result.candidates.some((item) => item.title === categoryOnly.title));
+  assert.equal(result.candidates.find((item) => item.title === categoryOnly.title).tier, "low");
+});
+
+test("all five low-overlap Amazon options remain available for manual selection", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Muscle Soak Bergamot Sensitive Aloe Botanical Celestial Herbal",
+    brand: "",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const candidates = Array.from({ length: 5 }, (_, index) =>
+    candidate(`Imperial Radox Body Wash Option ${index + 1}`, {
+      asin: `B000LOW0${index + 1}`,
+      brandMatch: false,
+    }),
+  );
+  const evaluations = candidates.map((_, index) => ({
+    index,
+    verdict: "different",
+    reason: "The package looks different from the source.",
+  }));
+
+  const result = await withVisualEvaluations(evaluations, () =>
+    verifyAmazonCandidates(product, matchResponse(candidates)),
+  );
+
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates.length, 5);
+  assert.ok(result.candidates.every((item) => item.tier === "low"));
+  assert.ok(result.candidates.every((item) => item.titleWordCoverage < TITLE_WORD_MATCH_THRESHOLD));
+  assert.ok(result.candidates.every((item) => Math.round(item.titleWordCoverage * 100) === 10));
 });

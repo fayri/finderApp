@@ -234,19 +234,18 @@ export async function verifyAmazonCandidates(
     const identityMismatches = candidateIdentityMismatch(candidate);
     const visualConflict = evaluation.verdict === "different";
 
-    if (!exactEan && !titleFallback && evaluation.verdict !== "strong") return;
-    if (!exactEan && visualConflict && !titleFallback) return;
-
     const needsManualReview = identityMismatches.length > 0 || visualConflict;
     const tier = exactEan
       ? needsManualReview
         ? "low"
         : "high"
-      : evaluation.verdict === "strong" && !needsManualReview
-        ? "medium"
-        : needsManualReview
-          ? "low"
-          : candidate.tier;
+      : !titleFallback
+        ? "low"
+        : evaluation.verdict === "strong" && !needsManualReview
+          ? "medium"
+          : needsManualReview
+            ? "low"
+            : candidate.tier;
     const visualReason = evaluation.reason;
 
     verified.push({
@@ -264,7 +263,7 @@ export async function verifyAmazonCandidates(
     return {
       ...response,
       status: "not-found",
-      message: "No Amazon UK candidate passed the visual identity check or the 90% source-title-word fallback.",
+      message: "No Amazon UK listings were returned in the top search options.",
       bestCandidate: null,
       candidates: [],
     };

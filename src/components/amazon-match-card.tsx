@@ -350,6 +350,29 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect, onCandi
             )}
           </div>
         </>
+      ) : result.candidates.length ? (
+        <section className="amazon-candidate-section" aria-label="Amazon options for manual review">
+          <div className="amazon-candidate-heading">
+            <div>
+              <h4>No confident match yet</h4>
+              <p>{result.message || "No listing passed both the title and image checks. Review these options manually."}</p>
+            </div>
+            <span>{result.candidates.length} options</span>
+          </div>
+          <div className="amazon-candidate-grid">
+            {result.candidates.map((option) => (
+              <CandidateOption
+                key={option.asin || option.productUrl || option.title}
+                candidate={option}
+                selected={false}
+                fallbackSearchUrl={amazonSearchUrl(result)}
+                sourceTitle={sourceTitle}
+                onDetails={(updated) => onCandidateDetails(result.rowNumber, updated)}
+                onSelect={() => onCandidateSelect(result.rowNumber, option)}
+              />
+            ))}
+          </div>
+        </section>
       ) : (
         <p className="amazon-result-message">{result.message || "The result is ready for review."}</p>
       )}

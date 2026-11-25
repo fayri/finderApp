@@ -5,6 +5,7 @@ import type {
 } from "@/lib/amazon-types";
 
 export const TITLE_WORD_MATCH_THRESHOLD = 0.9;
+export const MIN_VISUAL_MATCH_SCORE = 85;
 
 export type VisualVerdict = "strong" | "possible" | "different" | "uncertain" | "unavailable";
 
@@ -91,8 +92,11 @@ function candidateIdentityMismatch(candidate: AmazonSearchCandidate): string[] {
   if (candidate.brandMatch === false) mismatches.push("brand");
   if (candidate.variantMatch === false) mismatches.push("variant");
   if (candidate.sizeMatch === false) mismatches.push("size");
-  if (candidate.packMatch === false) mismatches.push("pack count");
   return mismatches;
+}
+
+function isStrongVisualMatch(verdict: VisualVerdict, imageMatchScore: number | null): boolean {
+  return verdict === "strong" && imageMatchScore !== null && imageMatchScore >= MIN_VISUAL_MATCH_SCORE;
 }
 
 function evaluationFallback(index: number): VisualEvaluation {
@@ -100,7 +104,7 @@ function evaluationFallback(index: number): VisualEvaluation {
     index,
     verdict: "unavailable",
     imageMatchScore: null,
-    reason: "The images could not be compared; title-word matching was used instead.",
+    reason: "Visual comparison was unavailable; no automatic match can be made without image evidence.",
   };
 }
 
@@ -183,11 +187,17 @@ function reasonForCandidate(
     ? ` The ${mismatches.join(", ")} also needs review.`
     : "";
 
-  if (exactEan) {
-    if (verdict === "different") {
-      return `The EAN matches, but the image review found a visual conflict: ${visualReason}${mismatchText}`;
-    }
-    return `The EAN appears exactly in the Amazon result text.${mismatchText}`;
+  if (exactEan && verdict === "different") {
+    return `The EAN matches, but the image review found a visual conflict: ${visualReason}${mismatchText}`;
+  }
+  if (exactEan && verdict === "strong" && mismatches.length === 0 && titlePercent !== null && titlePercent >= TITLE_WORD_MATCH_THRESHOLD * 100) {
+    return `The EAN, product title, and visual evidence align.${mismatchText}`;
+  }
+  if (exactEan && verdict !== "strong") {
+    return `The EAN appears in the Amazon result, but visual evidence is not strong enough to confirm the same product. ${visualReason}${mismatchText}`;
+  }
+  if (exactEan && titlePercent !== null && titlePercent < TITLE_WORD_MATCH_THRESHOLD * 100) {
+    return `The EAN appears in the Amazon result, but only ${titlePercent}% of meaningful title words overlap; title and image evidence must also align.${mismatchText}`;
   }
   if (verdict === "strong" && mismatches.length === 0) {
     const titleNote = titlePercent === null
@@ -217,29 +227,27 @@ export function updateAmazonTitleMatch(
   const coverage = sourceTitle.trim() ? titleWordCoverage(sourceTitle, title) : null;
   const exactEan = candidate.eanMatch;
   const identityMismatches = candidateIdentityMismatch(candidate);
-  const visualVerdict = candidate.visualVerdict ?? "unavailable";
-  const visualConflict = visualVerdict === "different";
-  const needsManualReview = identityMismatches.length > 0 || visualConflict;
+  const rawVisualVerdict = candidate.visualVerdict ?? "unavailable";
+  const imageMatchScore = candidate.imageMatchScore ?? null;
+  const strongVisualMatch = isStrongVisualMatch(rawVisualVerdict, imageMatchScore);
+  const visualVerdict = rawVisualVerdict === "strong" && !strongVisualMatch ? "possible" : rawVisualVerdict;
+  const visualReason =
+    rawVisualVerdict === "strong" && !strongVisualMatch
+      ? `The visual score is below the ${MIN_VISUAL_MATCH_SCORE}% match threshold. ${candidate.visualReason ?? "The visual review did not provide a clear explanation."}`
+      : candidate.visualReason ?? "The visual review did not provide a clear explanation.";
   const titleFallback = titleMeetsFallbackThreshold(sourceTitle, title);
-  const tier = exactEan
-    ? needsManualReview
-      ? "low"
-      : "high"
-    : !titleFallback
-      ? "low"
-      : visualVerdict === "strong" && !needsManualReview
-        ? "medium"
-        : needsManualReview
-          ? "low"
-          : candidate.tier;
+  const qualifies = titleFallback && strongVisualMatch && identityMismatches.length === 0;
+  const tier = qualifies ? (exactEan ? "high" : "medium") : "low";
 
   return {
     ...candidate,
     tier,
+    visualVerdict,
+    visualReason,
     titleWordCoverage: coverage ?? undefined,
     reason: reasonForCandidate(
       visualVerdict,
-      candidate.visualReason ?? "The visual review did not provide a clear explanation.",
+      visualReason,
       coverage,
       identityMismatches,
       exactEan,
@@ -254,7 +262,7 @@ function candidateRank(candidate: AmazonSearchCandidate): [number, number, numbe
   const combinedEvidence = imageScore === null ? titleScore : imageScore * 0.65 + titleScore * 0.35;
   const visualRank = candidate.visualVerdict === "strong" ? 3 : candidate.visualVerdict === "possible" ? 2 : candidate.visualVerdict === "different" ? 0 : 1;
   const tierRank = candidate.tier === "high" ? 3 : candidate.tier === "medium" ? 2 : 1;
-  return [eanPriority, combinedEvidence, visualRank, tierRank, candidate.titleScore];
+  return [tierRank, combinedEvidence, visualRank, eanPriority, candidate.titleScore];
 }
 
 function compareCandidates(left: AmazonSearchCandidate, right: AmazonSearchCandidate): number {
@@ -290,30 +298,24 @@ export async function verifyAmazonCandidates(
     const exactEan = candidate.eanMatch;
     const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidate.title);
     const identityMismatches = candidateIdentityMismatch(candidate);
-    const visualConflict = evaluation.verdict === "different";
-
-    const needsManualReview = identityMismatches.length > 0 || visualConflict;
-    const tier = exactEan
-      ? needsManualReview
-        ? "low"
-        : "high"
-      : !titleFallback
-        ? "low"
-        : evaluation.verdict === "strong" && !needsManualReview
-          ? "medium"
-          : needsManualReview
-            ? "low"
-            : candidate.tier;
-    const visualReason = evaluation.reason;
+    const visualScore = evaluation.imageMatchScore;
+    const strongVisualMatch = isStrongVisualMatch(evaluation.verdict, visualScore);
+    const visualVerdict = evaluation.verdict === "strong" && !strongVisualMatch ? "possible" : evaluation.verdict;
+    const qualifies = titleFallback && strongVisualMatch && identityMismatches.length === 0;
+    const tier = qualifies ? (exactEan ? "high" : "medium") : "low";
+    const visualReason =
+      evaluation.verdict === "strong" && !strongVisualMatch
+        ? `The visual score is below the ${MIN_VISUAL_MATCH_SCORE}% match threshold. ${evaluation.reason}`
+        : evaluation.reason;
 
     verified.push({
       ...candidate,
       tier,
-      visualVerdict: evaluation.verdict,
+      visualVerdict,
       visualReason,
-      imageMatchScore: evaluation.imageMatchScore,
+      imageMatchScore: visualScore,
       titleWordCoverage: coverage ?? undefined,
-      reason: reasonForCandidate(evaluation.verdict, visualReason, coverage, identityMismatches, exactEan),
+      reason: reasonForCandidate(visualVerdict, visualReason, coverage, identityMismatches, exactEan),
     });
   });
 
@@ -328,11 +330,11 @@ export async function verifyAmazonCandidates(
     };
   }
 
-  const bestCandidate = verified[0];
+  const bestCandidate = verified.find((candidate) => candidate.tier === "high" || candidate.tier === "medium") ?? null;
   return {
     ...response,
-    status: bestCandidate.tier,
-    message: bestCandidate.reason,
+    status: bestCandidate?.tier ?? "low",
+    message: bestCandidate?.reason ?? `No listing passed both the ${Math.round(TITLE_WORD_MATCH_THRESHOLD * 100)}% title-match requirement and a strong visual match (at least ${MIN_VISUAL_MATCH_SCORE}%). Nothing was selected automatically; review the options below.`,
     bestCandidate,
     candidates: verified,
   };

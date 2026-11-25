@@ -28,6 +28,9 @@ export interface AmazonSearchCandidate {
   variantMatch?: boolean;
   sizeMatch: boolean;
   packMatch?: boolean;
+  amazonPackCount?: number;
+  amazonUnitPrice?: string;
+  supplierPackEquivalentPrice?: string;
   visualVerdict?: AmazonVisualVerdict;
   visualReason?: string;
   imageMatchScore?: number | null;
@@ -53,6 +56,7 @@ export interface AmazonMatchResponse {
   regalImageUrl: string;
   bestCandidate: AmazonSearchCandidate | null;
   candidates: AmazonSearchCandidate[];
+  scannedCandidateCount?: number;
   searchedQueries: Array<{ stage: string; query: string }>;
 }
 
@@ -63,5 +67,6 @@ export interface AmazonMatchRow extends AmazonProductInput {
   message: string;
   bestCandidate: AmazonSearchCandidate | null;
   candidates: AmazonSearchCandidate[];
+  scannedCandidateCount?: number;
   decision: AmazonReviewDecision;
 }

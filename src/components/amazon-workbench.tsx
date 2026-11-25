@@ -432,6 +432,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               regalImageUrl: verifiedMatch.regalImageUrl || product.regalImageUrl,
               bestCandidate: verifiedMatch.bestCandidate,
               candidates: verifiedMatch.candidates ?? [],
+              scannedCandidateCount: matchPayload.scannedCandidateCount ?? matchPayload.candidates.length,
               decision: null,
             };
             resultsByKey.set(product.key, rowResult);
@@ -500,6 +501,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
         regalImageUrl: sourceProduct.regalImageUrl,
         bestCandidate: null,
         candidates: sourceProduct.candidates,
+        scannedCandidateCount: sourceProduct.scannedCandidateCount,
         searchedQueries: [],
       };
       const verified = await verifyAmazonCandidates(sourceProduct, response);
@@ -702,7 +704,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Category only expands search. A confident result needs a strong title match (at least 90% meaningful-word coverage), strong visual evidence (at least 85%), and no brand, variant, or size conflict; an EAN cannot override a visual mismatch. Pack-count and photo-angle differences alone are allowed, but a different product form is not. The top five Amazon listings remain available for review, including low-confidence options. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. Category only expands search. Every returned result on a searched Amazon page is compared before the five strongest options are shown; image evidence leads, with title, size, and pack checks retained for review. A single Amazon item can be compared with a supplier multipack using per-item and pack-equivalent prices. A confident result still needs a strong title match (at least 90% meaningful-word coverage), strong visual evidence (at least 85%), and no brand, variant, or size conflict; an EAN cannot override a visual mismatch. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>

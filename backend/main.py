@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import urllib.parse
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal
@@ -22,8 +23,6 @@ AMAZON_MIN_GAP_SECONDS = 3.0
 AMAZON_TIMEOUT_SECONDS = 15
 AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
-MAX_CANDIDATES = 8
-MAX_RESULT_CANDIDATES = 5
 MAX_SEARCH_QUERIES = 5
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
@@ -162,6 +161,60 @@ def has_pack_match(pack: str, candidate_title: str) -> bool:
     return all(number in candidate_numbers for number in expected_numbers)
 
 
+def extract_amazon_pack_quantity(title: str) -> int:
+    patterns = (
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|g)\b",
+        r"\b(?:pack|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
+        r"\b(\d{1,3})\s*(?:pack|pk|count|ct|units?|pieces?|bottles?|tubes?|bars?|rolls?)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, title, re.IGNORECASE)
+        if match:
+            return max(1, int(match.group(1)))
+    return 1
+
+
+def extract_source_pack_quantity(pack: str) -> int | None:
+    match = re.search(r"\d+", pack)
+    return int(match.group(0)) if match else None
+
+
+def format_price(value: Decimal, currency: str) -> str:
+    symbol = {"GBP": "£", "EUR": "€", "USD": "$"}.get(currency.upper(), currency)
+    rounded = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{symbol}{rounded:.2f}"
+
+
+def candidate_price_details(price: str, title: str, source_pack: str) -> dict[str, Any]:
+    listing_quantity = extract_amazon_pack_quantity(title)
+    details: dict[str, Any] = {
+        "amazonPackCount": listing_quantity,
+        "amazonUnitPrice": "",
+        "supplierPackEquivalentPrice": "",
+    }
+    price_match = re.search(
+        r"(?P<currency>£|€|\$|GBP|EUR|USD)\s*(?P<amount>\d[\d,]*(?:\.\d{1,2})?)",
+        price,
+        re.IGNORECASE,
+    )
+    if not price_match:
+        return details
+
+    currency = price_match.group("currency")
+    amount_text = price_match.group("amount").replace(",", "")
+    try:
+        listing_price = Decimal(amount_text)
+    except InvalidOperation:
+        return details
+
+    unit_price = listing_price / listing_quantity
+    details["amazonUnitPrice"] = format_price(unit_price, currency)
+    source_quantity = extract_source_pack_quantity(source_pack)
+    if source_quantity:
+        details["supplierPackEquivalentPrice"] = format_price(unit_price * source_quantity, currency)
+    return details
+
+
 def exact_ean_in_text(ean: str, value: str) -> bool:
     return bool(ean and re.search(rf"(?<!\d){re.escape(ean)}(?!\d)", value))
 
@@ -201,6 +254,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         else tokens(clean_title(product.size)).issubset(candidate_tokens)
     )
     pack_match = not product.pack or has_pack_match(product.pack, candidate_title)
+    price_details = candidate_price_details(str(candidate.get("price", "")), candidate_title, product.pack)
     exact_ean = exact_ean_in_text(product.ean, listing_text)
     direct_title_match = bool(product_tokens) and title_coverage >= 0.5 and direct_title_score >= 0.48
     nearby_title_match = (
@@ -263,6 +317,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
             "variantMatch": variant_match,
             "sizeMatch": size_match,
             "packMatch": pack_match,
+            **price_details,
         }
     )
     return classified
@@ -452,7 +507,7 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
             asin = asin_from_href(href)
         product_url = amazon_product_url(href, asin)
         key = asin or product_url or title
-        if not title or not image_url or key in seen:
+        if not title or key in seen:
             continue
         seen.add(key)
         price = ""
@@ -472,8 +527,6 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
                 "eanMatch": exact_ean_in_text(ean, card_text),
             }
         )
-        if len(candidates) >= MAX_CANDIDATES:
-            break
 
     if candidates:
         return candidates
@@ -506,8 +559,6 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
                 "eanMatch": False,
             }
         )
-        if len(candidates) >= MAX_CANDIDATES:
-            break
     return candidates
 
 
@@ -667,6 +718,7 @@ def match_product(product: MatchRequest):
             "regalImageUrl": "",
             "bestCandidate": None,
             "candidates": [],
+            "scannedCandidateCount": 0,
             "searchedQueries": [],
         }
 
@@ -677,7 +729,9 @@ def match_product(product: MatchRequest):
     try:
         for stage, query in queries:
             searched_queries.append({"stage": stage, "query": query})
-            for raw_candidate in search_amazon(query, product.ean):
+            page_has_relevant_candidate = False
+            page_candidates = search_amazon(query, product.ean)
+            for raw_candidate in page_candidates:
                 classified = classify_candidate(product, raw_candidate)
                 if not classified:
                     continue
@@ -687,24 +741,37 @@ def match_product(product: MatchRequest):
                 if existing is None or candidate_sort_key(classified) > candidate_sort_key(existing):
                     candidates_by_key[key] = classified
 
-            if len(candidates_by_key) >= MAX_RESULT_CANDIDATES:
+                page_has_relevant_candidate = page_has_relevant_candidate or bool(
+                    classified["eanMatch"]
+                    or (
+                        classified["brandMatch"]
+                        and classified["sizeMatch"]
+                        and float(classified["titleScore"]) >= 0.45
+                    )
+                )
+
+            if page_has_relevant_candidate:
                 break
     except AmazonBlocked as error:
+        candidates = sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)
         return {
             "status": "blocked",
             "message": str(error),
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
-            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:MAX_RESULT_CANDIDATES],
+            "candidates": candidates,
+            "scannedCandidateCount": len(candidates),
             "searchedQueries": searched_queries,
         }
     except (requests.RequestException, RuntimeError, ValueError) as error:
+        candidates = sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)
         return {
             "status": "error",
             "message": str(error) or "The Amazon UK search could not be completed.",
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
-            "candidates": sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)[:MAX_RESULT_CANDIDATES],
+            "candidates": candidates,
+            "scannedCandidateCount": len(candidates),
             "searchedQueries": searched_queries,
         }
 
@@ -716,17 +783,17 @@ def match_product(product: MatchRequest):
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": [],
+            "scannedCandidateCount": 0,
             "searchedQueries": searched_queries,
         }
 
-    visible_candidates = candidates[:MAX_RESULT_CANDIDATES]
-    best = visible_candidates[0]
-
+    best = candidates[0]
     return {
         "status": best["tier"],
         "message": best["reason"],
         "regalImageUrl": regal_image_url,
         "bestCandidate": best,
-        "candidates": visible_candidates,
+        "candidates": candidates,
+        "scannedCandidateCount": len(candidates),
         "searchedQueries": searched_queries,
     }

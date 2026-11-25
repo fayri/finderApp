@@ -130,7 +130,7 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["tier"], "low")
         self.assertIn("compare the image", result["reason"])
 
-    def test_unrelated_listing_is_not_a_match(self):
+    def test_unrelated_listing_is_kept_for_manual_review(self):
         product = MatchRequest(title="Hydrating Hand Cream", brand="Northstar", size="250 ml")
         candidate = {
             "title": "Wireless Bluetooth Headphones",
@@ -138,7 +138,24 @@ class MatcherTests(unittest.TestCase):
             "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
         }
 
-        self.assertIsNone(classify_candidate(product, candidate))
+        result = classify_candidate(product, candidate)
+
+        self.assertEqual(result["tier"], "low")
+        self.assertIn("source brand", result["reason"])
+
+    def test_ten_percent_title_overlap_is_kept_as_a_low_option(self):
+        product = MatchRequest(title="Imperial Leather Bath Muscle Soak Bergamot Sensitive Aloe Botanical Celestial")
+        candidate = {
+            "title": "Imperial Radox Body Wash",
+            "cardText": "Imperial Radox Body Wash",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertEqual(result["tier"], "low")
+        self.assertIn("10%", result["reason"])
+        self.assertIn("manual review", result["reason"])
 
     def test_search_result_parser_extracts_title_image_and_ean(self):
         html = '''
@@ -174,6 +191,27 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(results[0]["productUrl"], "https://www.amazon.co.uk/dp/B012345678")
         self.assertEqual(results[1]["asin"], "B012345679")
         self.assertEqual(results[1]["productUrl"], "https://www.amazon.co.uk/dp/B012345679")
+
+    def test_lookup_retains_top_five_options_with_low_title_similarity(self):
+        candidates = [
+            {
+                "asin": f"B000LOW00{index}",
+                "title": f"Imperial Radox Body Wash Option {index}",
+                "cardText": f"Imperial Radox Body Wash Option {index}",
+                "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+                "productUrl": f"https://www.amazon.co.uk/dp/B000LOW00{index}",
+                "price": "£2.00",
+            }
+            for index in range(1, 6)
+        ]
+        product = MatchRequest(title="Imperial Leather Bath Muscle Soak Bergamot Sensitive Aloe Botanical")
+
+        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual(len(result["candidates"]), 5)
+        self.assertEqual(result["status"], "low")
+        self.assertTrue(all(candidate["tier"] == "low" for candidate in result["candidates"]))
 
     def test_lookup_collects_up_to_five_visual_choices(self):
         candidates = [

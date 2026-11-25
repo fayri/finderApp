@@ -143,7 +143,7 @@ def exact_ean_in_text(ean: str, value: str) -> bool:
     return bool(ean and re.search(rf"(?<!\d){re.escape(ean)}(?!\d)", value))
 
 
-def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict[str, Any] | None:
+def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict[str, Any]:
     candidate_title = normalize_text(str(candidate.get("title", "")))
     listing_text = str(candidate.get("cardText", ""))
     candidate_tokens = tokens(candidate_title)
@@ -220,7 +220,14 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         else:
             reason = "Brand and product name align; confirm the size and variant manually."
     else:
-        return None
+        tier = "low"
+        overlap_percent = round(title_coverage * 100)
+        if not brand_match:
+            reason = "The source brand is not present in this listing; it is retained among the top Amazon options for manual review."
+        elif not title_match:
+            reason = f"Only {overlap_percent}% of source-title words overlap; this listing is retained among the top Amazon options for manual review."
+        else:
+            reason = "Some product details differ; this listing is retained among the top Amazon options for manual review."
 
     classified = {key: value for key, value in candidate.items() if key != "cardText"}
     classified.update(
@@ -568,7 +575,7 @@ def match_product(product: MatchRequest):
     if not candidates:
         return {
             "status": "not-found",
-            "message": "No Amazon UK result matched the EAN, product title, brand, variant, size, and pack details.",
+            "message": "Amazon UK returned no product listings for these searches.",
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": [],

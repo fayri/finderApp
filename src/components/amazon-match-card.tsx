@@ -81,7 +81,15 @@ function CandidateOption({
       <ImageFrame
         src={candidate.imageUrl}
         alt={`Amazon listing image: ${candidate.title}`}
-        label={selected ? "Selected" : candidate.visualVerdict ? visualLabels[candidate.visualVerdict] : `${candidate.tier} match`}
+        label={
+          selected
+            ? "Selected"
+            : candidate.visualVerdict
+              ? visualLabels[candidate.visualVerdict]
+              : candidate.tier === "low"
+                ? "Manual review option"
+                : `${candidate.tier} match`
+        }
       />
       <p className="amazon-candidate-title" title={candidate.title}>{candidate.title}</p>
       <p className="amazon-candidate-detail">
@@ -143,7 +151,7 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
         <div className="amazon-no-match">
           <SearchX size={18} aria-hidden="true" />
           <div>
-            <strong>No reliable Amazon result found</strong>
+            <strong>No Amazon listings found</strong>
             <p>{result.message}</p>
           </div>
         </div>
@@ -185,8 +193,8 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
             <section className="amazon-candidate-section" aria-label="Similar Amazon listings">
               <div className="amazon-candidate-heading">
                 <div>
-                  <h4>Closest listings</h4>
-                  <p>Choose the product that looks most like your source item.</p>
+                  <h4>Top Amazon options</h4>
+                  <p>Options below 90% title overlap are still shown. Compare details and choose manually.</p>
                 </div>
                 <span>{result.candidates.length} options</span>
               </div>

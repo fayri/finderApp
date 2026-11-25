@@ -138,7 +138,7 @@ test("visual conflicts stay visible for review while the stronger item ranks fir
   assert.equal(result.candidates[1].visualVerdict, "different");
 });
 
-test("the image estimate can outrank a title-heavy but visually conflicting candidate", async () => {
+test("strong visuals reorder options without bypassing the title gate", async () => {
   const product = {
     ean: "",
     title: "Spontex Heavy Duty Scourer Pads",
@@ -159,9 +159,11 @@ test("the image estimate can outrank a title-heavy but visually conflicting cand
     () => verifyAmazonCandidates(product, matchResponse([titleHeavy, visualMatch])),
   );
 
-  assert.equal(result.bestCandidate.title, visualMatch.title);
-  assert.ok(result.bestCandidate.titleWordCoverage < result.candidates[1].titleWordCoverage);
-  assert.equal(result.bestCandidate.imageMatchScore, 92);
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates[0].title, visualMatch.title);
+  assert.ok(result.candidates[0].titleWordCoverage < result.candidates[1].titleWordCoverage);
+  assert.equal(result.candidates[0].imageMatchScore, 92);
 });
 
 test("OCR label words do not increase the separate title match score", async () => {
@@ -182,7 +184,9 @@ test("OCR label words do not increase the separate title match score", async () 
     () => verifyAmazonCandidates(product, matchResponse([listing])),
   );
 
-  assert.equal(result.bestCandidate.titleWordCoverage, 0);
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.candidates[0].titleWordCoverage, 0);
+  assert.equal(result.candidates[0].imageMatchScore, 48);
 });
 
 test("image-only lookups leave the title score unscored", async () => {
@@ -202,8 +206,10 @@ test("image-only lookups leave the title score unscored", async () => {
     () => verifyAmazonCandidates(product, matchResponse([candidate("Green sponge pack")])),
   );
 
-  assert.equal(result.bestCandidate.titleWordCoverage, undefined);
-  assert.equal(result.bestCandidate.imageMatchScore, 72);
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates[0].titleWordCoverage, undefined);
+  assert.equal(result.candidates[0].imageMatchScore, 72);
 });
 
 test("inconclusive imagery retains low-overlap options from the search results", async () => {
@@ -228,10 +234,35 @@ test("inconclusive imagery retains low-overlap options from the search results",
   );
 
   assert.equal(result.candidates.length, 2);
-  assert.equal(result.bestCandidate.title, closeTitle.title);
-  assert.equal(result.bestCandidate.visualVerdict, "uncertain");
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates.find((item) => item.title === closeTitle.title).visualVerdict, "uncertain");
   assert.ok(result.candidates.some((item) => item.title === categoryOnly.title));
   assert.equal(result.candidates.find((item) => item.title === categoryOnly.title).tier, "low");
+});
+
+test("unavailable image checks never produce a confident title-only match", async () => {
+  const product = {
+    ean: "",
+    title: "Spontex Heavy Duty Scourer Pads",
+    brand: "Spontex",
+    variant: "",
+    size: "3pk",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Spontex Heavy Duty Scourer Pads 3pk Pack of 6", { tier: "medium" });
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "unavailable", imageMatchScore: null, reason: "The supplier image could not be loaded." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.status, "low");
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.candidates[0].tier, "low");
+  assert.equal(result.candidates[0].imageMatchScore, null);
+  assert.match(result.candidates[0].visualReason, /supplier image could not be loaded/i);
 });
 
 test("all five low-overlap Amazon options remain available for manual selection", async () => {

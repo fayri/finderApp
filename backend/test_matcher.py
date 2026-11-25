@@ -214,6 +214,20 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(details["seller"], "Amazon.co.uk")
         self.assertEqual(details["price"], "£2.49")
 
+    def test_product_page_parser_reads_shipper_seller_and_price_from_buybox(self):
+        html = '''
+        <span id="productTitle">Spontex Heavy Duty Scourer Pads with Stop Grease, Pack of 6</span>
+        <div id="tabular-buybox">
+          <div class="tabular-buybox-text"><span>Shipper / Seller</span><span>Amazon</span></div>
+          <div class="a-price"><span class="a-offscreen">£7.68</span></div>
+        </div>
+        '''
+
+        details = extract_amazon_product_details(html)
+
+        self.assertEqual(details["seller"], "Amazon")
+        self.assertEqual(details["price"], "£7.68")
+
     def test_offer_lookup_returns_full_listing_details(self):
         html = '''
         <span id="productTitle">Spontex Heavy Duty Scourer Pads, Pack of 3</span>

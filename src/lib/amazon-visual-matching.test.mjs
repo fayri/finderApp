@@ -4,8 +4,22 @@ import {
   titleMeetsFallbackThreshold,
   titleWordCoverage,
   TITLE_WORD_MATCH_THRESHOLD,
+  updateAmazonTitleMatch,
   verifyAmazonCandidates,
 } from "./amazon-visual-matching.ts";
+
+test("the full Amazon page title replaces a short search label in title scoring", () => {
+  const listing = candidate("Spontex", {
+    amazonTitle: "Spontex Heavy Duty Scourer Pads, Pack of 3",
+    visualVerdict: "possible",
+    visualReason: "The green packaging and label are similar.",
+  });
+
+  const updated = updateAmazonTitleMatch("Spontex Heavy Duty Scourer Pads", listing);
+
+  assert.equal(updated.titleWordCoverage, 1);
+  assert.match(updated.reason, /100%/);
+});
 
 test("Amazon title fallback allows extra candidate words", () => {
   const coverage = titleWordCoverage(
@@ -52,6 +66,7 @@ function candidate(title, overrides = {}) {
     tier: "low",
     reason: "Candidate from the text search.",
     titleScore: 0.5,
+    imageMatchScore: null,
     eanMatch: false,
     brandMatch: true,
     variantMatch: true,
@@ -106,8 +121,8 @@ test("visual conflicts stay visible for review while the stronger item ranks fir
 
   const result = await withVisualEvaluations(
     [
-      { index: 0, verdict: "different", reason: "Red Radox twin bottles differ from the teal source bottle." },
-      { index: 1, verdict: "strong", reason: "Teal package and Imperial Leather label align with the source." },
+      { index: 0, verdict: "different", imageMatchScore: 12, reason: "Red Radox twin bottles differ from the teal source bottle." },
+      { index: 1, verdict: "strong", imageMatchScore: 94, reason: "Teal package and Imperial Leather label align with the source." },
     ],
     () => verifyAmazonCandidates(product, matchResponse([unrelated, intended])),
   );
@@ -116,9 +131,79 @@ test("visual conflicts stay visible for review while the stronger item ranks fir
   assert.equal(result.bestCandidate.title, intended.title);
   assert.equal(result.bestCandidate.tier, "medium");
   assert.equal(result.bestCandidate.visualVerdict, "strong");
+  assert.equal(result.bestCandidate.imageMatchScore, 94);
+  assert.equal(result.candidates[1].imageMatchScore, 12);
   assert.equal(result.candidates[1].title, unrelated.title);
   assert.equal(result.candidates[1].tier, "low");
   assert.equal(result.candidates[1].visualVerdict, "different");
+});
+
+test("the image estimate can outrank a title-heavy but visually conflicting candidate", async () => {
+  const product = {
+    ean: "",
+    title: "Spontex Heavy Duty Scourer Pads",
+    brand: "Spontex",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const titleHeavy = candidate("Spontex Heavy Duty Scourer Pads 3 Pack");
+  const visualMatch = candidate("Green Scourer Pad", { brandMatch: false, titleScore: 0.2 });
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "different", imageMatchScore: 15, reason: "The package silhouette and colors differ." },
+      { index: 1, verdict: "strong", imageMatchScore: 92, reason: "The green pack and label match the source image." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([titleHeavy, visualMatch])),
+  );
+
+  assert.equal(result.bestCandidate.title, visualMatch.title);
+  assert.ok(result.bestCandidate.titleWordCoverage < result.candidates[1].titleWordCoverage);
+  assert.equal(result.bestCandidate.imageMatchScore, 92);
+});
+
+test("OCR label words do not increase the separate title match score", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Soak",
+    brand: "Imperial Leather",
+    variant: "",
+    size: "",
+    pack: "",
+    imageTerms: "green bottle citrus refill",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Green bottle citrus refill");
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "uncertain", imageMatchScore: 48, reason: "The label is not fully legible." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.bestCandidate.titleWordCoverage, 0);
+});
+
+test("image-only lookups leave the title score unscored", async () => {
+  const product = {
+    ean: "",
+    title: "",
+    brand: "",
+    variant: "",
+    size: "",
+    pack: "",
+    imageTerms: "green sponge pack",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "possible", imageMatchScore: 72, reason: "The green package is similar." }],
+    () => verifyAmazonCandidates(product, matchResponse([candidate("Green sponge pack")])),
+  );
+
+  assert.equal(result.bestCandidate.titleWordCoverage, undefined);
+  assert.equal(result.bestCandidate.imageMatchScore, 72);
 });
 
 test("inconclusive imagery retains low-overlap options from the search results", async () => {

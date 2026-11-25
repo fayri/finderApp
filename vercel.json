@@ -16,6 +16,12 @@
       }
     },
     {
+      "source": "/api/amazon/offer",
+      "destination": {
+        "service": "amazon_matcher"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "web"

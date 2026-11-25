@@ -24,6 +24,7 @@ import type {
   AmazonMatchRow,
   AmazonMatchStatus,
   AmazonProductInput,
+  AmazonSearchCandidate,
 } from "@/lib/amazon-types";
 import type { ParsedSource } from "@/lib/types";
 import { fallbackCategory } from "@/lib/amazon-categories";
@@ -176,6 +177,12 @@ function formulaSafe(value: string): string {
   return /^[\s]*[=+@\-]/.test(cleaned) ? `'${cleaned}` : cleaned;
 }
 
+function sameAmazonListing(left: AmazonSearchCandidate, right: AmazonSearchCandidate): boolean {
+  if (left.asin && right.asin) return left.asin === right.asin;
+  if (left.productUrl && right.productUrl) return left.productUrl === right.productUrl;
+  return left.title === right.title;
+}
+
 function downloadResults(results: AmazonMatchRow[], fileName: string): void {
   const headers = [
     "Row",
@@ -190,9 +197,11 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
     "Review decision",
     "Amazon title",
     "Amazon ASIN",
-    "Amazon price",
+    "Amazon seller",
+    "Amazon selling price",
     "AI visual review",
-    "Source product text match",
+    "AI image match estimate",
+    "Title match %",
     "Amazon URL",
     "Match notes",
   ];
@@ -208,10 +217,14 @@ function downloadResults(results: AmazonMatchRow[], fileName: string): void {
       result.pack,
       result.status,
       result.decision ?? "",
-      result.bestCandidate?.title ?? "",
+      result.bestCandidate?.amazonTitle || result.bestCandidate?.title || "",
       result.bestCandidate?.asin ?? "",
+      result.bestCandidate?.seller ?? "",
       result.bestCandidate?.price ?? "",
       result.bestCandidate?.visualVerdict ?? "",
+      typeof result.bestCandidate?.imageMatchScore === "number"
+        ? `${Math.round(result.bestCandidate.imageMatchScore)}%`
+        : "",
       typeof result.bestCandidate?.titleWordCoverage === "number"
         ? `${Math.round(result.bestCandidate.titleWordCoverage * 100)}%`
         : "",
@@ -482,6 +495,23 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
     );
   }
 
+  function updateCandidateDetails(rowNumber: number, candidate: AmazonSearchCandidate) {
+    setResults((current) =>
+      current.map((result) => {
+        if (result.rowNumber !== rowNumber) return result;
+        const matches = (existing: AmazonSearchCandidate) => sameAmazonListing(existing, candidate);
+        const updatesBestCandidate = result.bestCandidate !== null && matches(result.bestCandidate);
+        return {
+          ...result,
+          status: updatesBestCandidate ? candidate.tier : result.status,
+          message: updatesBestCandidate ? candidate.reason : result.message,
+          candidates: result.candidates.map((existing) => (matches(existing) ? candidate : existing)),
+          bestCandidate: updatesBestCandidate ? candidate : result.bestCandidate,
+        };
+      }),
+    );
+  }
+
   const products = source && mapping ? mappedProducts(source, mapping) : [];
   const queueSize = uniqueProducts(products).length;
   const highCount = results.filter((result) => result.status === "high").length;
@@ -683,11 +713,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                   result={result}
                   onDecision={updateDecision}
                   onCandidateSelect={updateCandidate}
+                  onCandidateDetails={updateCandidateDetails}
                 />
               ))}
             </div>
             <p className="results-disclaimer amazon-disclaimer">
-              AI visual review prioritizes package shape and dominant color, with title and label details as identity evidence. The top five Amazon listings are retained even below 90% title overlap, and those low-confidence options always require your manual review. High matches require an exact EAN in the Amazon result text.
+              Title match measures source-title word coverage; image match is an independent AI visual estimate, not a probability. Load each Amazon listing&apos;s full title, seller, and current page price for manual review before confirming. Amazon prices can change. High matches require an exact EAN in the Amazon result text.
             </p>
           </>
         ) : (

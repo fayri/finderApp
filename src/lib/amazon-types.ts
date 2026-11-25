@@ -30,8 +30,21 @@ export interface AmazonSearchCandidate {
   packMatch?: boolean;
   visualVerdict?: AmazonVisualVerdict;
   visualReason?: string;
+  imageMatchScore?: number | null;
   titleWordCoverage?: number;
+  amazonTitle?: string;
+  seller?: string;
+  listingDetailsChecked?: boolean;
+  listingDetailsMessage?: string;
   searchedBy: "ean" | "detail" | "image" | "brand" | "category";
+}
+
+export interface AmazonOfferDetailsResponse {
+  status: "found" | "partial" | "blocked" | "error";
+  message: string;
+  amazonTitle: string;
+  seller: string;
+  price: string;
 }
 
 export interface AmazonMatchResponse {

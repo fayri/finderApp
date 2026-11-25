@@ -1,12 +1,17 @@
+"use client";
+
+import { useState } from "react";
 import Image from "next/image";
-import { BadgeCheck, Check, ExternalLink, ImageOff, SearchX, ShieldAlert, X } from "lucide-react";
-import type { AmazonMatchRow, AmazonSearchCandidate } from "@/lib/amazon-types";
+import { BadgeCheck, Check, ExternalLink, ImageOff, LoaderCircle, SearchX, ShieldAlert, X } from "lucide-react";
+import type { AmazonMatchRow, AmazonOfferDetailsResponse, AmazonSearchCandidate } from "@/lib/amazon-types";
 import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
+import { updateAmazonTitleMatch } from "@/lib/amazon-visual-matching";
 
 interface AmazonMatchCardProps {
   result: AmazonMatchRow;
   onDecision: (rowNumber: number, decision: "confirmed" | "rejected") => void;
   onCandidateSelect: (rowNumber: number, candidate: AmazonSearchCandidate) => void;
+  onCandidateDetails: (rowNumber: number, candidate: AmazonSearchCandidate) => void;
 }
 
 const visualLabels = {
@@ -63,19 +68,96 @@ function ImageFrame({ src, alt, label }: { src: string; alt: string; label: stri
   );
 }
 
+function AmazonDetailsButton({
+  candidate,
+  sourceTitle,
+  onDetails,
+}: {
+  candidate: AmazonSearchCandidate;
+  sourceTitle: string;
+  onDetails: (candidate: AmazonSearchCandidate) => void;
+}) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  async function loadDetails() {
+    if (!candidate.asin || isLoading) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/amazon/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asin: candidate.asin }),
+      });
+      const payload = (await response.json().catch(() => null)) as AmazonOfferDetailsResponse | null;
+      if (!response.ok || !payload) {
+        throw new Error("Could not read Amazon listing details. Open the listing to verify them manually.");
+      }
+
+      const amazonTitle = payload.amazonTitle.trim();
+      const updatedCandidate = updateAmazonTitleMatch(sourceTitle, {
+        ...candidate,
+        amazonTitle: amazonTitle || candidate.amazonTitle,
+        seller: payload.seller.trim() || candidate.seller,
+        price: payload.price.trim() || candidate.price,
+        listingDetailsChecked: true,
+        listingDetailsMessage: payload.message,
+      });
+      onDetails(updatedCandidate);
+    } catch (error) {
+      onDetails({
+        ...candidate,
+        listingDetailsChecked: true,
+        listingDetailsMessage: error instanceof Error ? error.message : "Could not read Amazon listing details.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="secondary-button amazon-details-button"
+      onClick={loadDetails}
+      disabled={isLoading || !candidate.asin}
+      aria-busy={isLoading}
+      title={candidate.asin ? undefined : "Amazon did not provide an ASIN for this listing."}
+    >
+      {isLoading ? <LoaderCircle size={13} className="amazon-detail-spinner" aria-hidden="true" /> : null}
+      {isLoading ? "Checking Amazon…" : candidate.listingDetailsChecked ? "Refresh listing details" : "Load title, seller & price"}
+    </button>
+  );
+}
+
+function ScoreMetric({ label, percentage, help }: { label: string; percentage: number | null; help?: string }) {
+  const value = percentage === null ? "Not scored" : `${Math.round(percentage)}%`;
+  return (
+    <div className="amazon-score-metric" aria-label={`${label}: ${value}`} title={help}>
+      <strong>{value}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function CandidateOption({
   candidate,
   selected,
   onSelect,
+  onDetails,
+  sourceTitle,
   fallbackSearchUrl,
 }: {
   candidate: AmazonSearchCandidate;
   selected: boolean;
   onSelect: () => void;
+  onDetails: (candidate: AmazonSearchCandidate) => void;
+  sourceTitle: string;
   fallbackSearchUrl: string;
 }) {
+  const displayTitle = candidate.amazonTitle || candidate.title;
+  const sellerValue = candidate.seller || (candidate.listingDetailsChecked ? "Not shown" : "Not checked");
   return (
-    <article className={`amazon-candidate-option${selected ? " is-selected" : ""}`} aria-label={`Amazon listing: ${candidate.title}`}>
+    <article className={`amazon-candidate-option${selected ? " is-selected" : ""}`} aria-label={`Amazon listing: ${displayTitle}`}>
       <ImageFrame
         src={candidate.imageUrl}
         alt={`Amazon listing image: ${candidate.title}`}
@@ -89,25 +171,31 @@ function CandidateOption({
                 : `${candidate.tier} match`
         }
       />
-      <p className="amazon-candidate-title" title={candidate.title}>{candidate.title}</p>
-      <p className="amazon-candidate-detail">
-        {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
-      </p>
-      {typeof candidate.titleWordCoverage === "number" ? (
-        <p className="amazon-candidate-coverage">
-          <strong>{Math.round(candidate.titleWordCoverage * 100)}%</strong> product text
-        </p>
+      <p className="amazon-candidate-title" title={displayTitle}>{displayTitle}</p>
+      {candidate.amazonTitle && candidate.amazonTitle !== candidate.title ? (
+        <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
       ) : null}
+      <p className="amazon-candidate-detail">
+        <span><strong>Seller:</strong> {sellerValue}</span>
+        <span><strong>Price:</strong> {candidate.price || "Not found"}</span>
+        <span>ASIN {candidate.asin || "not available"}</span>
+      </p>
+      <div className="amazon-candidate-scores" aria-label="Independent match scores">
+        <ScoreMetric label="Title match" percentage={typeof candidate.titleWordCoverage === "number" ? candidate.titleWordCoverage * 100 : null} />
+        <ScoreMetric label="Image match" percentage={typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore : null} help="AI visual estimate, not a calibrated probability." />
+      </div>
       {candidate.visualReason ? <p className="amazon-candidate-visual-reason">{candidate.visualReason}</p> : null}
+      {candidate.listingDetailsMessage ? <p className="amazon-details-message" role="status">{candidate.listingDetailsMessage}</p> : null}
       <div className="amazon-candidate-actions">
         <a className="amazon-product-link" href={candidate.productUrl || fallbackSearchUrl} target="_blank" rel="noreferrer">
           Open listing <ExternalLink size={13} aria-hidden="true" />
         </a>
+        <AmazonDetailsButton candidate={candidate} sourceTitle={sourceTitle} onDetails={onDetails} />
         <button
           type="button"
           className="secondary-button amazon-select-candidate"
           onClick={onSelect}
-          aria-label={selected ? `${candidate.title} is selected` : `Use ${candidate.title} as the Amazon match`}
+          aria-label={selected ? `${displayTitle} is selected` : `Use ${displayTitle} as the Amazon match`}
           aria-pressed={selected}
         >
           {selected ? "Selected" : "Use this listing"}
@@ -117,11 +205,12 @@ function CandidateOption({
   );
 }
 
-export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: AmazonMatchCardProps) {
+export function AmazonMatchCard({ result, onDecision, onCandidateSelect, onCandidateDetails }: AmazonMatchCardProps) {
   const candidate = result.bestCandidate;
   const isReview = result.status === "medium" || result.status === "low";
   const headingId = result.rowNumber === 0 ? "amazon-single-item-result" : `amazon-row-${result.rowNumber}`;
   const rowLabel = result.rowNumber === 0 ? "SINGLE ITEM" : `ROW ${result.rowNumber.toString().padStart(2, "0")}`;
+  const sourceTitle = [result.brand, result.title, result.variant].filter(Boolean).join(" ");
 
   return (
     <article className={`amazon-result-card amazon-result-${result.status}`} aria-labelledby={headingId}>
@@ -176,26 +265,37 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
             <section className="amazon-compare-panel" aria-label="Amazon UK candidate">
               <div className="amazon-compare-heading">
                 <p className="amazon-compare-label">AMAZON UK CANDIDATE</p>
-                {typeof candidate.titleWordCoverage === "number" ? (
-                  <div className="amazon-match-percentage" aria-label={`Source product text match ${Math.round(candidate.titleWordCoverage * 100)} percent`}>
-                    <strong>{Math.round(candidate.titleWordCoverage * 100)}%</strong>
-                    <span>Product text</span>
-                  </div>
-                ) : null}
+                <div className="amazon-match-score-list" aria-label="Independent match scores">
+                  <ScoreMetric label="Title match" percentage={typeof candidate.titleWordCoverage === "number" ? candidate.titleWordCoverage * 100 : null} />
+                  <ScoreMetric label="Image match" percentage={typeof candidate.imageMatchScore === "number" ? candidate.imageMatchScore : null} help="AI visual estimate, not a calibrated probability." />
+                </div>
               </div>
               <ImageFrame
                 src={candidate.imageUrl}
-                alt={`Amazon listing image: ${candidate.title}`}
+                alt={`Amazon listing image: ${candidate.amazonTitle || candidate.title}`}
                 label="Amazon listing"
               />
-              <p className="amazon-compare-title">{candidate.title}</p>
+              <p className="amazon-compare-title">{candidate.amazonTitle || candidate.title}</p>
+              {candidate.amazonTitle && candidate.amazonTitle !== candidate.title ? (
+                <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
+              ) : null}
               <p className="amazon-compare-detail">
-                {candidate.price || "Price not found"} · ASIN {candidate.asin || "not available"}
-                {candidate.visualVerdict ? ` · AI visual check: ${visualLabels[candidate.visualVerdict]}` : ""}
+                <span><strong>Seller:</strong> {candidate.seller || (candidate.listingDetailsChecked ? "Not shown" : "Not checked")}</span>
+                <span><strong>Price:</strong> {candidate.price || "Not found"}</span>
+                <span>ASIN {candidate.asin || "not available"}</span>
               </p>
-              <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
-                Open listing <ExternalLink size={13} aria-hidden="true" />
-              </a>
+              {candidate.listingDetailsMessage ? <p className="amazon-details-message" role="status">{candidate.listingDetailsMessage}</p> : null}
+              <div className="amazon-listing-actions">
+                <AmazonDetailsButton
+                  candidate={candidate}
+                  sourceTitle={sourceTitle}
+                  onDetails={(updated) => onCandidateDetails(result.rowNumber, updated)}
+                />
+                <a className="amazon-product-link" href={candidate.productUrl || amazonSearchUrl(result)} target="_blank" rel="noreferrer">
+                  Open listing <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              </div>
+              {candidate.visualVerdict ? <p className="amazon-visual-verdict">AI visual check: {visualLabels[candidate.visualVerdict]}</p> : null}
             </section>
           </div>
 
@@ -204,7 +304,7 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
               <div className="amazon-candidate-heading">
                 <div>
                   <h4>Top Amazon options</h4>
-                  <p>Options below 90% title overlap are still shown. Compare details and choose manually.</p>
+                  <p>Title and image scores are separate. Compare the full listing details before choosing.</p>
                 </div>
                 <span>{result.candidates.length} options</span>
               </div>
@@ -215,6 +315,8 @@ export function AmazonMatchCard({ result, onDecision, onCandidateSelect }: Amazo
                     candidate={option}
                     selected={candidate.asin === option.asin && candidate.productUrl === option.productUrl && candidate.title === option.title}
                     fallbackSearchUrl={amazonSearchUrl(result)}
+                    sourceTitle={sourceTitle}
+                    onDetails={(updated) => onCandidateDetails(result.rowNumber, updated)}
                     onSelect={() => onCandidateSelect(result.rowNumber, option)}
                   />
                 ))}

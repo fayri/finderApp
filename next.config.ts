@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
             source: "/api/amazon/match",
             destination: "http://127.0.0.1:8001/api/amazon/match",
           },
+          {
+            source: "/api/amazon/offer",
+            destination: "http://127.0.0.1:8001/api/amazon/offer",
+          },
         ]
       : [];
   },

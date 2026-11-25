@@ -5,7 +5,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from main import AmazonBlocked, MatchRequest, build_search_queries, classify_candidate, extract_amazon_candidates, match_product, search_amazon
+from main import AmazonBlocked, AmazonOfferRequest, MatchRequest, build_search_queries, classify_candidate, extract_amazon_candidates, extract_amazon_product_details, extract_seller_name, get_amazon_offer, match_product, search_amazon
 
 
 class MatcherTests(unittest.TestCase):
@@ -186,6 +186,64 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(results[0]["title"], "Northstar Hand Cream 250ml")
         self.assertTrue(results[0]["eanMatch"])
         self.assertEqual(results[0]["productUrl"], "https://www.amazon.co.uk/dp/B012345678")
+
+    def test_search_result_parser_prefers_full_amazon_title_and_extracts_seller(self):
+        html = '''
+        <div data-component-type="s-search-result" data-asin="B012345678">
+          <h2><a href="/dp/B012345678" title="Spontex Heavy Duty Scourer Pads, 3 Count"><span>Spontex</span></a></h2>
+          <img class="s-image" src="https://m.media-amazon.com/images/I/example.jpg" alt="Spontex" />
+          <span>Sold by: Amazon.co.uk</span>
+        </div>
+        '''
+
+        results = extract_amazon_candidates(html, "")
+
+        self.assertEqual(results[0]["title"], "Spontex Heavy Duty Scourer Pads, 3 Count")
+        self.assertEqual(results[0]["seller"], "Amazon.co.uk")
+
+    def test_product_page_parser_extracts_full_title_seller_and_current_price(self):
+        html = '''
+        <span id="productTitle">Spontex Heavy Duty Scourer Pads, Pack of 3</span>
+        <a id="sellerProfileTriggerId">Amazon.co.uk</a>
+        <div id="corePrice_feature_div"><span class="a-offscreen">£2.49</span></div>
+        '''
+
+        details = extract_amazon_product_details(html)
+
+        self.assertEqual(details["amazonTitle"], "Spontex Heavy Duty Scourer Pads, Pack of 3")
+        self.assertEqual(details["seller"], "Amazon.co.uk")
+        self.assertEqual(details["price"], "£2.49")
+
+    def test_offer_lookup_returns_full_listing_details(self):
+        html = '''
+        <span id="productTitle">Spontex Heavy Duty Scourer Pads, Pack of 3</span>
+        <a id="sellerProfileTriggerId">Amazon.co.uk</a>
+        <div id="corePrice_feature_div"><span class="a-offscreen">£2.49</span></div>
+        '''
+
+        with patch("main.fetch_amazon_page", return_value=html) as fetch:
+            result = get_amazon_offer(AmazonOfferRequest(asin="B012345678"))
+
+        fetch.assert_called_once_with(
+            "https://www.amazon.co.uk/dp/B012345678",
+            "The Amazon UK listing details could not be reached. Try again later.",
+        )
+        self.assertEqual(result["status"], "found")
+        self.assertEqual(result["amazonTitle"], "Spontex Heavy Duty Scourer Pads, Pack of 3")
+        self.assertEqual(result["seller"], "Amazon.co.uk")
+        self.assertEqual(result["price"], "£2.49")
+
+    def test_seller_parser_extracts_marketplace_seller_from_merchant_summary(self):
+        seller = extract_seller_name("Dispatches from Amazon. Sold by: Green Shop and dispatched from Amazon")
+
+        self.assertEqual(seller, "Green Shop")
+
+    def test_offer_request_normalizes_and_validates_asin(self):
+        request = AmazonOfferRequest(asin="b01btku7e8")
+
+        self.assertEqual(request.asin, "B01BTKU7E8")
+        with self.assertRaises(ValueError):
+            AmazonOfferRequest(asin="https://example.com")
 
     def test_search_result_parser_recovers_asin_from_product_link(self):
         html = '''

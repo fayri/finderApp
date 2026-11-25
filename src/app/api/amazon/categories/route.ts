@@ -1,5 +1,5 @@
 import { generateText } from "ai";
-import categoryDictionary from "../../../../../product_category_terms.json";
+import categoryDictionary from "../../../../../backend/product_category_terms.json";
 
 export const maxDuration = 30;
 

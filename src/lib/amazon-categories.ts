@@ -1,4 +1,4 @@
-import categoryDictionary from "../../product_category_terms.json";
+import categoryDictionary from "../../backend/product_category_terms.json";
 
 const categories = categoryDictionary.categories;
 

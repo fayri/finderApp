@@ -135,6 +135,50 @@ def normalized_measurement(number: Decimal, unit: str) -> str:
     return f"{formatted}{unit}"
 
 
+def compound_pack_counts(value: str) -> tuple[int, int] | None:
+    match = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*(\d{1,3})(?:\s*(packs?|pks?|count|ct|units?|pcs?|pieces?))?(?!\w)",
+        value,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    if not match.group(3) and re.match(
+        r"\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        value[match.end():],
+        re.IGNORECASE,
+    ):
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def extract_amazon_pack_components(title: str) -> tuple[int, int | None, int]:
+    volume_multiplier = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        title,
+        re.IGNORECASE,
+    )
+    if volume_multiplier:
+        quantity = max(1, int(volume_multiplier.group(1)))
+        return quantity, None, quantity
+
+    compound = compound_pack_counts(title)
+    if compound:
+        outer_count, inner_count = compound
+        return outer_count, inner_count, outer_count * inner_count
+
+    patterns = (
+        r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
+        r"\b(\d{1,3})\s*(?:packs?|pks?|count|ct|units?|pieces?|bottles?|tubes?|bars?|rolls?)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, title, re.IGNORECASE)
+        if match:
+            quantity = max(1, int(match.group(1)))
+            return quantity, None, quantity
+    return 1, None, 1
+
+
 def measurements(value: str) -> set[str]:
     pattern = re.compile(
         r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?)\b",
@@ -176,6 +220,11 @@ def measurements(value: str) -> set[str]:
         re.IGNORECASE,
     ):
         result.add(f"{int(number_text)}count")
+    compound = compound_pack_counts(value)
+    if compound:
+        outer_count, inner_count = compound
+        result.add(f"{inner_count}count")
+        result.add(f"{outer_count * inner_count}count")
     return result
 
 
@@ -191,33 +240,84 @@ def measurements_match(expected: set[str], actual: set[str]) -> bool:
         expected_by_dimension.setdefault(measurement_dimension(measurement), set()).add(measurement)
     for measurement in actual:
         actual_by_dimension.setdefault(measurement_dimension(measurement), set()).add(measurement)
-    return all(expected_values == actual_by_dimension.get(dimension, set()) for dimension, expected_values in expected_by_dimension.items())
-
-
-def has_pack_match(pack: str, candidate_title: str) -> bool:
-    expected_quantity = extract_source_pack_quantity(pack)
-    if expected_quantity is not None:
-        return expected_quantity == extract_amazon_pack_quantity(candidate_title)
-    expected_words = tokens(pack)
-    return not expected_words or expected_words.issubset(tokens(candidate_title))
-
-
-def extract_amazon_pack_quantity(title: str) -> int:
-    patterns = (
-        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
-        r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
-        r"\b(\d{1,3})\s*(?:packs?|pks?|count|ct|units?|pieces?|bottles?|tubes?|bars?|rolls?)\b",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, title, re.IGNORECASE)
-        if match:
-            return max(1, int(match.group(1)))
-    return 1
+    for dimension, expected_values in expected_by_dimension.items():
+        actual_values = actual_by_dimension.get(dimension, set())
+        if dimension == "count":
+            if not expected_values.issubset(actual_values):
+                return False
+        elif expected_values != actual_values:
+            return False
+    return True
 
 
 def extract_source_pack_quantity(pack: str) -> int | None:
+    compound = compound_pack_counts(pack)
+    if compound:
+        return compound[0] * compound[1]
+    volume_multiplier = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        pack,
+        re.IGNORECASE,
+    )
+    if volume_multiplier:
+        return max(1, int(volume_multiplier.group(1)))
+    for pattern in (
+        r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
+        r"\b(\d{1,3})\s*(?:packs?|pks?|count|ct|units?|pieces?)\b",
+    ):
+        match = re.search(pattern, pack, re.IGNORECASE)
+        if match:
+            return max(1, int(match.group(1)))
     match = re.search(r"\d+", pack)
     return int(match.group(0)) if match else None
+
+
+def source_size_pack_quantity(size: str) -> int | None:
+    count_measurements = [measurement for measurement in measurements(size) if measurement.endswith("count")]
+    if len(count_measurements) != 1:
+        return None
+    match = re.match(r"(\d+(?:\.\d+)?)count$", count_measurements[0])
+    return int(Decimal(match.group(1))) if match else None
+
+
+def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[bool, str]:
+    if not pack:
+        return True, "unspecified"
+
+    expected_quantity = extract_source_pack_quantity(pack)
+    if expected_quantity is not None:
+        outer_count, inner_count, listing_quantity = extract_amazon_pack_components(candidate_title)
+        source_size_quantity = source_size_pack_quantity(size)
+        expected_total_quantity = expected_quantity * source_size_quantity if source_size_quantity else expected_quantity
+        if expected_total_quantity == listing_quantity:
+            return True, "exact"
+        if inner_count is not None and source_size_quantity == inner_count and expected_quantity == outer_count:
+            return True, "exact"
+        if expected_quantity > 1 and (
+            listing_quantity == 1
+            or (outer_count == 1 and inner_count is not None and source_size_quantity == inner_count)
+        ):
+            return True, "single-item-fallback"
+        return False, "mismatch"
+
+    expected_words = tokens(pack)
+    if not expected_words or expected_words.issubset(tokens(candidate_title)):
+        return True, "exact"
+    return False, "mismatch"
+
+
+def extract_amazon_pack_quantity(title: str) -> int:
+    return extract_amazon_pack_components(title)[2]
+
+
+def source_pack_equivalent_quantity(pack: str, size: str) -> int | None:
+    source_quantity = extract_source_pack_quantity(pack)
+    if source_quantity is None:
+        return None
+    if compound_pack_counts(pack):
+        return source_quantity
+    size_quantity = source_size_pack_quantity(size)
+    return source_quantity * size_quantity if size_quantity else source_quantity
 
 
 def format_price(value: Decimal, currency: str) -> str:
@@ -226,10 +326,11 @@ def format_price(value: Decimal, currency: str) -> str:
     return f"{symbol}{rounded:.2f}"
 
 
-def candidate_price_details(price: str, title: str, source_pack: str) -> dict[str, Any]:
-    listing_quantity = extract_amazon_pack_quantity(title)
+def candidate_price_details(price: str, title: str, source_pack: str, source_size: str) -> dict[str, Any]:
+    outer_count, inner_count, listing_quantity = extract_amazon_pack_components(title)
     details: dict[str, Any] = {
         "amazonPackCount": listing_quantity,
+        "amazonPackBreakdown": f"{outer_count} × {inner_count} ({listing_quantity} total)" if inner_count is not None else str(listing_quantity),
         "amazonUnitPrice": "",
         "supplierPackEquivalentPrice": "",
     }
@@ -250,7 +351,7 @@ def candidate_price_details(price: str, title: str, source_pack: str) -> dict[st
 
     unit_price = listing_price / listing_quantity
     details["amazonUnitPrice"] = format_price(unit_price, currency)
-    source_quantity = extract_source_pack_quantity(source_pack)
+    source_quantity = source_pack_equivalent_quantity(source_pack, source_size)
     if source_quantity:
         details["supplierPackEquivalentPrice"] = format_price(unit_price * source_quantity, currency)
     return details
@@ -295,8 +396,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         if expected_measurements
         else tokens(clean_title(product.size)).issubset(candidate_tokens)
     )
-    pack_match = not product.pack or has_pack_match(product.pack, candidate_title)
-    price_details = candidate_price_details(str(candidate.get("price", "")), candidate_title, product.pack)
+    pack_match, pack_match_type = classify_pack_match(product.pack, product.size, candidate_title)
+    price_details = candidate_price_details(str(candidate.get("price", "")), candidate_title, product.pack, product.size)
     exact_ean = exact_ean_in_text(product.ean, listing_text)
     direct_title_match = bool(product_tokens) and title_coverage >= 0.5 and direct_title_score >= 0.48
     nearby_title_match = (
@@ -324,6 +425,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         if product.pack:
             details.append("pack")
         reason = f"The Amazon title contains the matching {' + '.join(details)}."
+        if pack_match_type == "single-item-fallback":
+            reason = "No exact supplier pack was found; this single-item listing matches the size and is priced as a supplier-pack equivalent."
     elif title_match and brand_match:
         tier = "low"
         if category_only_match:
@@ -359,6 +462,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
             "variantMatch": variant_match,
             "sizeMatch": size_match,
             "packMatch": pack_match,
+            "packMatchType": pack_match_type,
             **price_details,
         }
     )
@@ -862,6 +966,7 @@ def discover_product_brand(product: MatchRequest, candidates_by_key: dict[str, d
         is_strong_source_candidate = bool(
             preliminary["sizeMatch"]
             and preliminary["packMatch"]
+            and preliminary["packMatchType"] != "single-item-fallback"
             and (
                 preliminary["eanMatch"]
                 or (
@@ -918,9 +1023,16 @@ def match_product(product: MatchRequest):
         exact_dimension_matches = [
             candidate
             for candidate in classified_candidates
-            if candidate["sizeMatch"] and candidate["packMatch"]
+            if candidate["sizeMatch"]
+            and candidate["packMatch"]
+            and candidate["packMatchType"] != "single-item-fallback"
         ]
-        return sorted(exact_dimension_matches, key=candidate_sort_key, reverse=True)[:MAX_MATCH_CANDIDATES]
+        matches = exact_dimension_matches or [
+            candidate
+            for candidate in classified_candidates
+            if candidate["sizeMatch"] and candidate["packMatchType"] == "single-item-fallback"
+        ]
+        return sorted(matches, key=candidate_sort_key, reverse=True)[:MAX_MATCH_CANDIDATES]
 
     def search_and_collect(stage: str, query: str) -> bool:
         searched_queries.append({"stage": stage, "query": query})
@@ -949,7 +1061,11 @@ def match_product(product: MatchRequest):
                             raw_candidate[field] = existing[field]
                 candidates_by_key[key] = raw_candidate
 
-            exact_dimensions_match = classified["sizeMatch"] and classified["packMatch"]
+            exact_dimensions_match = (
+                classified["sizeMatch"]
+                and classified["packMatch"]
+                and classified["packMatchType"] != "single-item-fallback"
+            )
             page_has_relevant_candidate = page_has_relevant_candidate or bool(
                 exact_dimensions_match
                 and (

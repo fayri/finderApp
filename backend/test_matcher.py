@@ -259,7 +259,7 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(results[0]["title"], "Northstar Hand Cream 250ml")
         self.assertEqual(results[0]["imageUrl"], "")
 
-    def test_single_amazon_item_gets_supplier_pack_equivalent_price(self):
+    def test_single_amazon_item_is_supplier_pack_fallback(self):
         product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
         candidate = {
             "title": "Nivea Men Sensitive Shower Gel 250ml",
@@ -270,10 +270,106 @@ class MatcherTests(unittest.TestCase):
 
         result = classify_candidate(product, candidate)
 
-        self.assertFalse(result["packMatch"])
+        self.assertTrue(result["packMatch"])
+        self.assertEqual(result["packMatchType"], "single-item-fallback")
         self.assertEqual(result["amazonPackCount"], 1)
         self.assertEqual(result["amazonUnitPrice"], "£2.00")
         self.assertEqual(result["supplierPackEquivalentPrice"], "£12.00")
+
+    def test_compound_two_by_five_pack_matches_supplier_pack_of_ten(self):
+        product = MatchRequest(title="Gentle Hand Wash", brand="Carex", size="250ml", pack="10")
+        candidate = {
+            "title": "Carex Gentle Hand Wash 250ml 2x5",
+            "cardText": "Carex Gentle Hand Wash 250ml 2x5",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "price": "£20.00",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertTrue(result["sizeMatch"])
+        self.assertTrue(result["packMatch"])
+        self.assertEqual(result["amazonPackCount"], 10)
+        self.assertEqual(result["amazonPackBreakdown"], "2 × 5 (10 total)")
+        self.assertEqual(result["amazonUnitPrice"], "£2.00")
+        self.assertEqual(result["supplierPackEquivalentPrice"], "£20.00")
+
+    def test_nested_pack_matches_supplier_outer_pack_and_inner_size(self):
+        product = MatchRequest(title="Daily Tablets", brand="Carex", size="5pk", pack="2")
+        candidate = {
+            "title": "Carex Daily Tablets 2x5pk",
+            "cardText": "Carex Daily Tablets 2x5pk",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "price": "£10.00",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertTrue(result["sizeMatch"])
+        self.assertTrue(result["packMatch"])
+        self.assertEqual(result["amazonPackCount"], 10)
+        self.assertEqual(result["supplierPackEquivalentPrice"], "£10.00")
+
+    def test_single_outer_pack_with_matching_inner_size_is_a_fallback(self):
+        product = MatchRequest(title="Daily Tablets", brand="Carex", size="5pk", pack="10")
+        candidate = {
+            "title": "Carex Daily Tablets 1x5pk",
+            "cardText": "Carex Daily Tablets 1x5pk",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "price": "£5.00",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertTrue(result["sizeMatch"])
+        self.assertTrue(result["packMatch"])
+        self.assertEqual(result["packMatchType"], "single-item-fallback")
+        self.assertEqual(result["supplierPackEquivalentPrice"], "£50.00")
+
+    def test_single_item_fallback_is_returned_when_exact_pack_is_not_found(self):
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
+        candidate = {
+            "asin": "B000000001",
+            "title": "Nivea Men Sensitive Shower Gel 250ml",
+            "cardText": "Nivea Men Sensitive Shower Gel 250ml",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "productUrl": "https://www.amazon.co.uk/dp/B000000001",
+            "price": "£2.00",
+        }
+
+        with patch("main.search_amazon", return_value=[candidate]), patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual(len(result["candidates"]), 1)
+        self.assertEqual(result["candidates"][0]["packMatchType"], "single-item-fallback")
+        self.assertTrue(result["candidates"][0]["packMatch"])
+
+    def test_exact_pack_results_are_preferred_over_single_item_fallbacks(self):
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
+        candidates = [
+            {
+                "asin": "B000000001",
+                "title": "Nivea Men Sensitive Shower Gel 250ml",
+                "cardText": "Nivea Men Sensitive Shower Gel 250ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/single.jpg",
+                "productUrl": "https://www.amazon.co.uk/dp/B000000001",
+                "price": "£2.00",
+            },
+            {
+                "asin": "B000000002",
+                "title": "Nivea Men Sensitive Shower Gel 250ml Pack of 6",
+                "cardText": "Nivea Men Sensitive Shower Gel 250ml Pack of 6",
+                "imageUrl": "https://m.media-amazon.com/images/I/pack.jpg",
+                "productUrl": "https://www.amazon.co.uk/dp/B000000002",
+                "price": "£12.00",
+            },
+        ]
+
+        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual([candidate["asin"] for candidate in result["candidates"]], ["B000000002"])
+        self.assertEqual(result["candidates"][0]["packMatchType"], "exact")
 
     def test_multipack_price_is_normalized_to_an_individual_item(self):
         product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")

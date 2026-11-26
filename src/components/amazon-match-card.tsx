@@ -132,8 +132,16 @@ function AttributeMatchSummary({ result, candidate }: { result: AmazonMatchRow; 
   return (
     <div className="amazon-attribute-checks" role="list" aria-label="Quick supplier attribute checks">
       {attributes.map(({ label, value, match }) => {
+        const isSingleItemFallback = label === "Pack" && candidate.packMatchType === "single-item-fallback";
         const state = match === true ? "match" : match === false ? "mismatch" : "unknown";
-        const stateLabel = match === true ? "Match" : match === false ? "Mismatch" : "Check";
+        const stateLabel = isSingleItemFallback
+          ? "Single-item fallback"
+          : match === true
+            ? "Match"
+            : match === false
+              ? "Mismatch"
+              : "Check";
+        const displayValue = isSingleItemFallback ? `${value} (single-item fallback)` : value;
         return (
           <span
             key={label}
@@ -146,7 +154,7 @@ function AttributeMatchSummary({ result, candidate }: { result: AmazonMatchRow; 
             {match === false ? <X size={13} aria-hidden="true" /> : null}
             {match === undefined ? <CircleHelp size={13} aria-hidden="true" /> : null}
             <strong>{label}</strong>
-            <span>{value}</span>
+            <span>{displayValue}</span>
             <span className="amazon-attribute-status">{stateLabel}</span>
           </span>
         );
@@ -334,7 +342,7 @@ function CandidateOption({
         <div className="amazon-candidate-quick-checks" aria-label="Size and pack review">
           <span className={candidate.sizeMatch ? "is-match" : "is-review"}>Size {candidate.sizeMatch ? "match" : "review"}</span>
           <span className={candidate.packMatch === false ? "is-review" : "is-match"}>
-            Pack {candidate.packMatch === false ? "differs" : "match"}
+            Pack {candidate.packMatchType === "single-item-fallback" ? "single-item fallback" : candidate.packMatch === false ? "differs" : "match"}
           </span>
         </div>
         <button
@@ -375,7 +383,7 @@ function CandidateOption({
           <span><strong>Brand:</strong> {candidate.amazonBrand || (candidate.listingDetailsChecked ? "Not shown" : "Not checked")}</span>
           <span><strong>Shipper / seller:</strong> {sellerValue}</span>
           <span><strong>Amazon listing price:</strong> {candidate.price || "Not found"}</span>
-          <span><strong>Pack quantity in listing:</strong> {candidate.amazonPackCount ?? "Not identified"}</span>
+          <span><strong>Pack quantity in listing:</strong> {candidate.amazonPackBreakdown ?? candidate.amazonPackCount ?? "Not identified"}</span>
           <span><strong>ASIN:</strong> {candidate.asin || "Not available"}</span>
         </p>
         {candidate.amazonUnitPrice || candidate.supplierPackEquivalentPrice ? (
@@ -492,7 +500,7 @@ export function AmazonMatchCard({
                 <h4>{candidate ? "Top Amazon matches" : "No confident match yet"}</h4>
                 <p>
                   {candidate
-                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings before ranking. Images lead the ranking; title, size, and pack checks remain visible. Pack prices are normalized for comparison.`
+                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings. Exact size and pack matches are preferred; a matching single-item listing is shown when no exact supplier pack is found.`
                     : result.message || "Review the closest Amazon listings below."}
                 </p>
               </div>

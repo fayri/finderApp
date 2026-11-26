@@ -25,6 +25,7 @@ AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_SEARCH_QUERIES = 5
 MAX_BRAND_DETAIL_LOOKUPS = 3
+MAX_MATCH_CANDIDATES = 5
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
 )["categories"]
@@ -129,55 +130,194 @@ def tokens(value: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", value.lower()))
 
 
+def normalized_measurement(number: Decimal, unit: str) -> str:
+    formatted = format(number.normalize(), "f")
+    return f"{formatted}{unit}"
+
+
+def compound_pack_counts(value: str) -> tuple[int, int] | None:
+    match = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*(\d{1,3})(?:\s*(packs?|pks?|count|ct|units?|pcs?|pieces?))?(?!\w)",
+        value,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    if not match.group(3) and re.match(
+        r"\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        value[match.end():],
+        re.IGNORECASE,
+    ):
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def extract_amazon_pack_components(title: str) -> tuple[int, int | None, int]:
+    volume_multiplier = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        title,
+        re.IGNORECASE,
+    )
+    if volume_multiplier:
+        quantity = max(1, int(volume_multiplier.group(1)))
+        return quantity, None, quantity
+
+    compound = compound_pack_counts(title)
+    if compound:
+        outer_count, inner_count = compound
+        return outer_count, inner_count, outer_count * inner_count
+
+    patterns = (
+        r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
+        r"\b(\d{1,3})\s*(?:packs?|pks?|count|ct|units?|pieces?|bottles?|tubes?|bars?|rolls?)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, title, re.IGNORECASE)
+        if match:
+            quantity = max(1, int(match.group(1)))
+            return quantity, None, quantity
+    return 1, None, 1
+
+
 def measurements(value: str) -> set[str]:
     pattern = re.compile(
-        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|g|cm|mm|metres?|meters?|m|pcs?|pieces?|tablets?|wipes?|sachets?|capsules?|count|ct)\b",
+        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?)\b",
         re.IGNORECASE,
     )
     result: set[str] = set()
     for number_text, unit_text in pattern.findall(value):
-        number = float(number_text.replace(",", "."))
+        number = Decimal(number_text.replace(",", "."))
         unit = unit_text.lower().replace(" ", "").replace(".", "")
-        if unit in {"l", "litre", "litres", "liter", "liters"}:
+        if unit in {"l", "litre", "litres", "liter", "liters", "millilitre", "millilitres", "milliliter", "milliliters"}:
             number *= 1000
             unit = "ml"
         elif unit == "cl":
             number *= 10
             unit = "ml"
-        elif unit == "kg":
+        elif unit in {"kg", "kilogram", "kilograms"}:
             number *= 1000
             unit = "g"
-        elif unit in {"piece", "pieces", "pc", "pcs", "tablet", "tablets", "wipe", "wipes", "sachet", "sachets", "capsule", "capsules", "count", "ct"}:
+        elif unit in {"mg", "milligram", "milligrams"}:
+            number /= 1000
+            unit = "g"
+        elif unit in {"gram", "grams", "gramme", "grammes", "gm"}:
+            unit = "g"
+        elif unit in {"m", "metre", "metres", "meter", "meters"}:
+            number *= 1000
+            unit = "mm"
+        elif unit in {"cm", "centimetre", "centimetres", "centimeter", "centimeters"}:
+            number *= 10
+            unit = "mm"
+        elif unit in {"piece", "pieces", "pc", "pcs", "tablet", "tablets", "wipe", "wipes", "sachet", "sachets", "capsule", "capsules", "count", "ct", "unit", "units", "pack", "packs", "pk", "pks"}:
             unit = "count"
-        result.add(f"{number:g}{unit}")
+        result.add(normalized_measurement(number, unit))
+
+    for number_text in re.findall(r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,4})\b", value, re.IGNORECASE):
+        result.add(f"{int(number_text)}count")
+    for number_text in re.findall(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        value,
+        re.IGNORECASE,
+    ):
+        result.add(f"{int(number_text)}count")
+    compound = compound_pack_counts(value)
+    if compound:
+        outer_count, inner_count = compound
+        result.add(f"{inner_count}count")
+        result.add(f"{outer_count * inner_count}count")
     return result
 
 
-def has_pack_match(pack: str, candidate_title: str) -> bool:
-    expected_numbers = re.findall(r"\d+", pack)
-    if not expected_numbers:
-        expected_words = tokens(pack)
-        return not expected_words or expected_words.issubset(tokens(candidate_title))
-    candidate_numbers = re.findall(r"\d+", candidate_title)
-    return all(number in candidate_numbers for number in expected_numbers)
+def measurement_dimension(measurement: str) -> str:
+    unit = re.search(r"(?:fl oz|ml|g|mm|count)$", measurement)
+    return unit.group(0) if unit else measurement
 
 
-def extract_amazon_pack_quantity(title: str) -> int:
-    patterns = (
-        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|g)\b",
-        r"\b(?:pack|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
-        r"\b(\d{1,3})\s*(?:pack|pk|count|ct|units?|pieces?|bottles?|tubes?|bars?|rolls?)\b",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, title, re.IGNORECASE)
-        if match:
-            return max(1, int(match.group(1)))
-    return 1
+def measurements_match(expected: set[str], actual: set[str]) -> bool:
+    expected_by_dimension: dict[str, set[str]] = {}
+    actual_by_dimension: dict[str, set[str]] = {}
+    for measurement in expected:
+        expected_by_dimension.setdefault(measurement_dimension(measurement), set()).add(measurement)
+    for measurement in actual:
+        actual_by_dimension.setdefault(measurement_dimension(measurement), set()).add(measurement)
+    for dimension, expected_values in expected_by_dimension.items():
+        actual_values = actual_by_dimension.get(dimension, set())
+        if dimension == "count":
+            if not expected_values.issubset(actual_values):
+                return False
+        elif expected_values != actual_values:
+            return False
+    return True
 
 
 def extract_source_pack_quantity(pack: str) -> int | None:
+    compound = compound_pack_counts(pack)
+    if compound:
+        return compound[0] * compound[1]
+    volume_multiplier = re.search(
+        r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
+        pack,
+        re.IGNORECASE,
+    )
+    if volume_multiplier:
+        return max(1, int(volume_multiplier.group(1)))
+    for pattern in (
+        r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,3})\b",
+        r"\b(\d{1,3})\s*(?:packs?|pks?|count|ct|units?|pieces?)\b",
+    ):
+        match = re.search(pattern, pack, re.IGNORECASE)
+        if match:
+            return max(1, int(match.group(1)))
     match = re.search(r"\d+", pack)
     return int(match.group(0)) if match else None
+
+
+def source_size_pack_quantity(size: str) -> int | None:
+    count_measurements = [measurement for measurement in measurements(size) if measurement.endswith("count")]
+    if len(count_measurements) != 1:
+        return None
+    match = re.match(r"(\d+(?:\.\d+)?)count$", count_measurements[0])
+    return int(Decimal(match.group(1))) if match else None
+
+
+def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[bool, str]:
+    if not pack:
+        return True, "unspecified"
+
+    expected_quantity = extract_source_pack_quantity(pack)
+    if expected_quantity is not None:
+        outer_count, inner_count, listing_quantity = extract_amazon_pack_components(candidate_title)
+        source_size_quantity = source_size_pack_quantity(size)
+        expected_total_quantity = expected_quantity * source_size_quantity if source_size_quantity else expected_quantity
+        if expected_total_quantity == listing_quantity:
+            return True, "exact"
+        if inner_count is not None and source_size_quantity == inner_count and expected_quantity == outer_count:
+            return True, "exact"
+        if expected_quantity > 1 and (
+            listing_quantity == 1
+            or (outer_count == 1 and inner_count is not None and source_size_quantity == inner_count)
+        ):
+            return True, "single-item-fallback"
+        return False, "mismatch"
+
+    expected_words = tokens(pack)
+    if not expected_words or expected_words.issubset(tokens(candidate_title)):
+        return True, "exact"
+    return False, "mismatch"
+
+
+def extract_amazon_pack_quantity(title: str) -> int:
+    return extract_amazon_pack_components(title)[2]
+
+
+def source_pack_equivalent_quantity(pack: str, size: str) -> int | None:
+    source_quantity = extract_source_pack_quantity(pack)
+    if source_quantity is None:
+        return None
+    if compound_pack_counts(pack):
+        return source_quantity
+    size_quantity = source_size_pack_quantity(size)
+    return source_quantity * size_quantity if size_quantity else source_quantity
 
 
 def format_price(value: Decimal, currency: str) -> str:
@@ -186,10 +326,11 @@ def format_price(value: Decimal, currency: str) -> str:
     return f"{symbol}{rounded:.2f}"
 
 
-def candidate_price_details(price: str, title: str, source_pack: str) -> dict[str, Any]:
-    listing_quantity = extract_amazon_pack_quantity(title)
+def candidate_price_details(price: str, title: str, source_pack: str, source_size: str) -> dict[str, Any]:
+    outer_count, inner_count, listing_quantity = extract_amazon_pack_components(title)
     details: dict[str, Any] = {
         "amazonPackCount": listing_quantity,
+        "amazonPackBreakdown": f"{outer_count} × {inner_count} ({listing_quantity} total)" if inner_count is not None else str(listing_quantity),
         "amazonUnitPrice": "",
         "supplierPackEquivalentPrice": "",
     }
@@ -210,7 +351,7 @@ def candidate_price_details(price: str, title: str, source_pack: str) -> dict[st
 
     unit_price = listing_price / listing_quantity
     details["amazonUnitPrice"] = format_price(unit_price, currency)
-    source_quantity = extract_source_pack_quantity(source_pack)
+    source_quantity = source_pack_equivalent_quantity(source_pack, source_size)
     if source_quantity:
         details["supplierPackEquivalentPrice"] = format_price(unit_price * source_quantity, currency)
     return details
@@ -251,12 +392,12 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     variant_match = not variant_tokens or variant_tokens.issubset(candidate_tokens)
     expected_measurements = measurements(product.size)
     size_match = not product.size or (
-        expected_measurements.issubset(measurements(candidate_title))
+        measurements_match(expected_measurements, measurements(candidate_title))
         if expected_measurements
         else tokens(clean_title(product.size)).issubset(candidate_tokens)
     )
-    pack_match = not product.pack or has_pack_match(product.pack, candidate_title)
-    price_details = candidate_price_details(str(candidate.get("price", "")), candidate_title, product.pack)
+    pack_match, pack_match_type = classify_pack_match(product.pack, product.size, candidate_title)
+    price_details = candidate_price_details(str(candidate.get("price", "")), candidate_title, product.pack, product.size)
     exact_ean = exact_ean_in_text(product.ean, listing_text)
     direct_title_match = bool(product_tokens) and title_coverage >= 0.5 and direct_title_score >= 0.48
     nearby_title_match = (
@@ -284,6 +425,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         if product.pack:
             details.append("pack")
         reason = f"The Amazon title contains the matching {' + '.join(details)}."
+        if pack_match_type == "single-item-fallback":
+            reason = "No exact supplier pack was found; this single-item listing matches the size and is priced as a supplier-pack equivalent."
     elif title_match and brand_match:
         tier = "low"
         if category_only_match:
@@ -319,6 +462,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
             "variantMatch": variant_match,
             "sizeMatch": size_match,
             "packMatch": pack_match,
+            "packMatchType": pack_match_type,
             **price_details,
         }
     )
@@ -435,7 +579,7 @@ def amazon_card_title(title_tag, link, image_tag) -> str:
         title_tag.get("title", ""),
         title_tag.get("aria-label", ""),
         title_tag.get_text(" ", strip=True),
-        image_tag.get("alt", ""),
+        image_tag.get("alt", "") if image_tag else "",
     ]
     titles = [normalize_text(str(value)) for value in values if value]
     return max(titles, key=len, default="")
@@ -559,11 +703,11 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
     for product in products:
         title_tag = product.find("h2")
         image_tag = product.find("img", class_="s-image")
-        if not title_tag or not image_tag:
+        if not title_tag:
             continue
         link = title_tag.find("a") or product.find("a", href=True)
         title = amazon_card_title(title_tag, link, image_tag)
-        image_url = image_from_card(image_tag)
+        image_url = image_from_card(image_tag) if image_tag else ""
         href = str(link.get("href", "")) if link else ""
         asin = str(product.get("data-asin", "")).strip().upper()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
@@ -764,9 +908,15 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     return queries
 
 
-def candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, float]:
+def candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, float, int, int, int]:
     priority = {"high": 3, "medium": 2, "low": 1}.get(candidate.get("tier"), 0)
-    return (priority, float(candidate.get("titleScore", 0)))
+    return (
+        int(bool(candidate.get("eanMatch"))),
+        float(candidate.get("titleScore", 0)),
+        int(bool(candidate.get("brandMatch"))),
+        int(bool(candidate.get("variantMatch"))),
+        priority,
+    )
 
 
 def discover_product_brand(product: MatchRequest, candidates_by_key: dict[str, dict[str, Any]]) -> str:
@@ -814,11 +964,15 @@ def discover_product_brand(product: MatchRequest, candidates_by_key: dict[str, d
 
         normalized_brand = re.sub(r"[^\w]+", " ", brand.casefold(), flags=re.UNICODE).strip()
         is_strong_source_candidate = bool(
-            preliminary["eanMatch"]
-            or (
-                float(preliminary["titleScore"]) >= 0.8
-                and preliminary["sizeMatch"]
-                and preliminary["variantMatch"]
+            preliminary["sizeMatch"]
+            and preliminary["packMatch"]
+            and preliminary["packMatchType"] != "single-item-fallback"
+            and (
+                preliminary["eanMatch"]
+                or (
+                    float(preliminary["titleScore"]) >= 0.8
+                    and preliminary["variantMatch"]
+                )
             )
         )
         vote = brand_votes.setdefault(normalized_brand, {"brand": brand, "count": 0, "strong": False})
@@ -866,7 +1020,19 @@ def match_product(product: MatchRequest):
             classify_candidate(effective_product, candidate)
             for candidate in candidates_by_key.values()
         ]
-        return sorted(classified_candidates, key=candidate_sort_key, reverse=True)
+        exact_dimension_matches = [
+            candidate
+            for candidate in classified_candidates
+            if candidate["sizeMatch"]
+            and candidate["packMatch"]
+            and candidate["packMatchType"] != "single-item-fallback"
+        ]
+        matches = exact_dimension_matches or [
+            candidate
+            for candidate in classified_candidates
+            if candidate["sizeMatch"] and candidate["packMatchType"] == "single-item-fallback"
+        ]
+        return sorted(matches, key=candidate_sort_key, reverse=True)[:MAX_MATCH_CANDIDATES]
 
     def search_and_collect(stage: str, query: str) -> bool:
         searched_queries.append({"stage": stage, "query": query})
@@ -895,12 +1061,19 @@ def match_product(product: MatchRequest):
                             raw_candidate[field] = existing[field]
                 candidates_by_key[key] = raw_candidate
 
+            exact_dimensions_match = (
+                classified["sizeMatch"]
+                and classified["packMatch"]
+                and classified["packMatchType"] != "single-item-fallback"
+            )
             page_has_relevant_candidate = page_has_relevant_candidate or bool(
-                classified["eanMatch"]
-                or (
-                    classified["brandMatch"]
-                    and classified["sizeMatch"]
-                    and float(classified["titleScore"]) >= 0.45
+                exact_dimensions_match
+                and (
+                    classified["eanMatch"]
+                    or (
+                        classified["brandMatch"]
+                        and float(classified["titleScore"]) >= 0.45
+                    )
                 )
             )
         return page_has_relevant_candidate
@@ -935,7 +1108,7 @@ def match_product(product: MatchRequest):
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": candidates,
-            "scannedCandidateCount": len(candidates),
+            "scannedCandidateCount": len(candidates_by_key),
             "searchedQueries": searched_queries,
             "discoveredBrand": discovered_brand,
         }
@@ -947,20 +1120,25 @@ def match_product(product: MatchRequest):
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": candidates,
-            "scannedCandidateCount": len(candidates),
+            "scannedCandidateCount": len(candidates_by_key),
             "searchedQueries": searched_queries,
             "discoveredBrand": discovered_brand,
         }
 
     candidates = ranked_candidates()
     if not candidates:
+        message = (
+            "Amazon UK returned listings, but none matched the exact size and pack count. Different sizes and pack counts are excluded."
+            if candidates_by_key and (product.size or product.pack)
+            else "Amazon UK returned no product listings for these searches."
+        )
         return {
             "status": "not-found",
-            "message": "Amazon UK returned no product listings for these searches.",
+            "message": message,
             "regalImageUrl": regal_image_url,
             "bestCandidate": None,
             "candidates": [],
-            "scannedCandidateCount": 0,
+            "scannedCandidateCount": len(candidates_by_key),
             "searchedQueries": searched_queries,
             "discoveredBrand": discovered_brand,
         }
@@ -975,7 +1153,7 @@ def match_product(product: MatchRequest):
         "regalImageUrl": regal_image_url,
         "bestCandidate": best,
         "candidates": candidates,
-        "scannedCandidateCount": len(candidates),
+        "scannedCandidateCount": len(candidates_by_key),
         "searchedQueries": searched_queries,
         "discoveredBrand": discovered_brand,
     }

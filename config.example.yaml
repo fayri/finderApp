@@ -1,0 +1,62 @@
+# Copy to config.yaml and adjust selectors for YOUR supplier website.
+# Supplier sheet columns -> output columns (matched case-insensitively)
+input_columns:
+  title: "Description"
+  pack: "Pack"
+  size: "Size"
+
+site:
+  base_url: "https://regalsales.co.uk"
+  # {ean} is replaced with the EAN from your sheet
+  search_url: "https://regalsales.co.uk/search?q={ean}"
+
+  # Optional: CSS selector of a result link on the search page.
+  # Leave empty/null if searching an EAN lands directly on the product page.
+  result_link_selector: "a.product-item-link"
+
+  # Optional: selector to click away cookie banners
+  cookie_accept_selector: "button#accept-cookies"
+
+  # Optional login (credentials come from env vars SUPPLIER_USER / SUPPLIER_PASS, never from this file)
+  login:
+    enabled: false
+    url: "https://www.example-supplier.com/login"
+    user_selector: "input[name=email]"
+    pass_selector: "input[name=password]"
+    submit_selector: "button[type=submit]"
+
+  # Text/selector that must appear on search page when nothing is found
+  not_found_text: "No results"
+
+  # Selector for the product title on the product page (falls back to og:title)
+  title_selector: "h1"
+  # Optional: wait for this on the product page before scraping (JS-rendered shops)
+  product_ready_selector: null
+
+images:
+  # Images are collected from ALL of these selectors (attribute is tried in order)
+  selectors:
+    - "div.gallery img"
+    - "a.gallery-zoom"
+    - "meta[property='og:image']"
+  attributes: ["data-zoom-image", "data-large", "data-src", "src", "href", "content"]
+  include_json_ld: true      # also read "image" from JSON-LD product data
+  include_srcset: true       # pick the largest candidate from srcset
+  exclude_patterns: ["placeholder", "logo", "sprite", "icon", "\\.svg"]
+  # Optional regex replace to upgrade thumbnails to full size, e.g. "/thumb/" -> "/full/"
+  url_rewrites: []           # - {pattern: "/thumb/", replacement: "/full/"}
+
+fields:            # CSS selectors tried in order; pack/size fall back to regex on the title
+  title: ["h1", "meta[property='og:title']"]
+  pack: []         # e.g. [".product-pack"]  (UNVERIFIED for regalsales - needs real markup)
+  size: []
+
+matching:
+  # Product page must contain the EAN somewhere (text or HTML) to count as "matched"
+  verify_ean_on_page: true
+
+run:
+  headless: true
+  delay_seconds: 1.0
+  timeout_ms: 20000
+  retries: 2

@@ -1,0 +1,481 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  titleMeetsFallbackThreshold,
+  titleWordCoverage,
+  TITLE_WORD_MATCH_THRESHOLD,
+  updateAmazonTitleMatch,
+  verifyAmazonCandidates,
+} from "./amazon-visual-matching.ts";
+import { buildAmazonProductSearchQuery } from "./amazon-search-url.ts";
+
+test("manual Amazon searches include missing brand and exact item size without pack count", () => {
+  const query = buildAmazonProductSearchQuery({
+    title: "Zoflora Disinfectant Lemon Zing",
+    brand: "Zoflora",
+    size: "120ml",
+  });
+
+  assert.equal(query, "Zoflora Disinfectant Lemon Zing 120ml");
+});
+
+test("manual Amazon searches do not mistake a different size for an exact match", () => {
+  const query = buildAmazonProductSearchQuery({ title: "Zoflora Concentrate 120ml", size: "20ml" });
+
+  assert.equal(query, "Zoflora Concentrate 120ml 20ml");
+});
+
+test("manual Amazon searches recognize multipack size in either order", () => {
+  assert.equal(
+    buildAmazonProductSearchQuery({ title: "Zoflora Lemon 4 x 120ml", size: "120 ml" }),
+    "Zoflora Lemon 4 x 120ml",
+  );
+  assert.equal(
+    buildAmazonProductSearchQuery({ title: "Zoflora Lemon 120ml x 4", size: "120ml" }),
+    "Zoflora Lemon 120ml x 4",
+  );
+});
+
+test("the full Amazon page title replaces a short search label in title scoring", () => {
+  const listing = candidate("Spontex", {
+    amazonTitle: "Spontex Heavy Duty Scourer Pads, Pack of 3",
+    visualVerdict: "possible",
+    visualReason: "The green packaging and label are similar.",
+  });
+
+  const updated = updateAmazonTitleMatch("Spontex Heavy Duty Scourer Pads", listing);
+
+  assert.equal(updated.titleWordCoverage, 1);
+  assert.match(updated.reason, /100%/);
+});
+
+test("Amazon title fallback allows extra candidate words", () => {
+  const coverage = titleWordCoverage(
+    "Imperial Leather Bath Muscle Soak Bergamot",
+    "2X Imperial Leather Bath Muscle Soak Bergamot 500ml",
+  );
+
+  assert.equal(coverage, 1);
+});
+
+test("title size matching ignores pack order while preserving the exact item volume", () => {
+  assert.equal(
+    titleWordCoverage(
+      "Zoflora Disinfectant Lemon Zing 120 ml",
+      "Zoflora Concentrated Disinfectant Lemon Zing 120ml x 4",
+    ),
+    1,
+  );
+  assert.ok(
+    titleWordCoverage("Zoflora Disinfectant Lemon Zing 120ml", "Zoflora Disinfectant Lemon Zing 500ml") < 1,
+  );
+});
+
+test("Amazon title fallback measures source-word coverage, not candidate length", () => {
+  const coverage = titleWordCoverage(
+    "Imperial Leather Bath Muscle Soak Bergamot",
+    "Imperial Leather Bath Muscle Soak",
+  );
+
+  assert.equal(coverage, 4 / 5);
+  assert.ok(coverage < TITLE_WORD_MATCH_THRESHOLD);
+});
+
+test("generic category words alone cannot satisfy title fallback", () => {
+  const coverage = titleWordCoverage("Bath soap", "Bath soap products");
+
+  assert.equal(coverage, 0);
+  assert.equal(titleMeetsFallbackThreshold("Bath soap", "Bath soap products"), false);
+});
+
+test("Amazon title fallback ignores common grammar words", () => {
+  const coverage = titleWordCoverage(
+    "The Imperial Leather Bath Soak with Bergamot",
+    "Imperial Leather Bath Soak Bergamot extra words",
+  );
+
+  assert.equal(coverage, 1);
+});
+
+function candidate(title, overrides = {}) {
+  return {
+    asin: "B000TEST",
+    title,
+    imageUrl: "https://m.media-amazon.com/images/I/test.jpg",
+    productUrl: "https://www.amazon.co.uk/dp/B000TEST",
+    price: "",
+    tier: "low",
+    reason: "Candidate from the text search.",
+    titleScore: 0.5,
+    imageMatchScore: null,
+    eanMatch: false,
+    brandMatch: true,
+    variantMatch: true,
+    sizeMatch: true,
+    packMatch: true,
+    searchedBy: "detail",
+    ...overrides,
+  };
+}
+
+function matchResponse(candidates) {
+  return {
+    status: "low",
+    message: "Candidates need review.",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+    bestCandidate: candidates[0] ?? null,
+    candidates,
+    searchedQueries: [],
+  };
+}
+
+async function withVisualEvaluations(evaluations, callback) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ evaluations }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  try {
+    return await callback();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("single-item fallbacks beat mismatched multipacks when visual evidence ties", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Cherry Snow Blossom Hand Wash",
+    brand: "Imperial Leather",
+    variant: "",
+    size: "500ml",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const threePack = candidate("Imperial Leather Cherry Snow Blossom Hand Wash 3 x 500ml", {
+    packMatch: false,
+    packMatchType: "mismatch",
+  });
+  const singleItem = candidate("Imperial Leather Cherry Snow Blossom Hand Wash 1 x 500ml", {
+    packMatch: true,
+    packMatchType: "single-item-fallback",
+  });
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "strong", imageMatchScore: 93, reason: "The bottle and label match." },
+      { index: 1, verdict: "strong", imageMatchScore: 93, reason: "The bottle and label match." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([threePack, singleItem])),
+  );
+
+  assert.deepEqual(result.candidates.map((item) => item.packMatchType), ["single-item-fallback", "mismatch"]);
+});
+
+test("brand-discovered full listing titles drive the visual title gate", async () => {
+  const product = {
+    ean: "",
+    title: "Gentle Hand Wash",
+    brand: "Carex",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Carex", {
+    amazonTitle: "Carex Gentle Hand Wash 250ml",
+    amazonBrand: "Carex",
+  });
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "strong", imageMatchScore: 94, reason: "The packaging and Carex label match the source." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.bestCandidate.tier, "medium");
+  assert.equal(result.bestCandidate.titleWordCoverage, 1);
+});
+
+test("visual conflicts stay visible for review while the stronger item ranks first", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Muscle Soak Bergamot",
+    brand: "Imperial Leather",
+    variant: "",
+    size: "500ml",
+    pack: "4",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const unrelated = candidate("2X Radox Muscle Therapy Bath Soak 500ml Black Pepper Ginseng Blend", {
+    brandMatch: false,
+    variantMatch: false,
+    packMatch: false,
+  });
+  const intended = candidate("Imperial Leather Bergamot Muscle Soak 500ml Pack of 4");
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "different", imageMatchScore: 12, reason: "Red Radox twin bottles differ from the teal source bottle." },
+      { index: 1, verdict: "strong", imageMatchScore: 94, reason: "Teal package and Imperial Leather label align with the source." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([unrelated, intended])),
+  );
+
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.bestCandidate.title, intended.title);
+  assert.equal(result.bestCandidate.tier, "medium");
+  assert.equal(result.bestCandidate.visualVerdict, "strong");
+  assert.equal(result.bestCandidate.imageMatchScore, 94);
+  assert.equal(result.candidates[1].imageMatchScore, 12);
+  assert.equal(result.candidates[1].title, unrelated.title);
+  assert.equal(result.candidates[1].tier, "low");
+  assert.equal(result.candidates[1].visualVerdict, "different");
+});
+
+test("a visually strong but unrelated listing cannot outrank the closer product title", async () => {
+  const product = {
+    ean: "",
+    title: "Spontex Heavy Duty Scourer Pads",
+    brand: "Spontex",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const titleHeavy = candidate("Spontex Heavy Duty Scourer Pads 3 Pack");
+  const visualMatch = candidate("Green Scourer Pad", { brandMatch: false, titleScore: 0.2 });
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "different", imageMatchScore: 15, reason: "The package silhouette and colors differ." },
+      { index: 1, verdict: "strong", imageMatchScore: 92, reason: "The green pack and label match the source." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([titleHeavy, visualMatch])),
+  );
+
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates[0].title, titleHeavy.title);
+  assert.ok(result.candidates[0].titleWordCoverage > result.candidates[1].titleWordCoverage);
+  assert.equal(result.candidates[1].imageMatchScore, 92);
+});
+
+test("supplier size is part of the title score and exact-size variants rank first", async () => {
+  const product = {
+    ean: "",
+    title: "Disinfectant Lemon Zing",
+    brand: "Zoflora",
+    variant: "",
+    size: "120ml",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const wrongVariant = candidate("Zoflora Concentrated Disinfectant Country Garden 120ml");
+  const wrongSize = candidate("Zoflora Concentrated Disinfectant Lemon Zing 500ml", { sizeMatch: false });
+  const intended = candidate("Zoflora Concentrated Disinfectant Lemon Zing 120ml");
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "strong", imageMatchScore: 99, reason: "The bottle looks similar." },
+      { index: 1, verdict: "strong", imageMatchScore: 96, reason: "The package looks similar." },
+      { index: 2, verdict: "uncertain", imageMatchScore: 52, reason: "The label is difficult to read." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([wrongVariant, wrongSize, intended])),
+  );
+
+  assert.equal(result.candidates[0].title, intended.title);
+  assert.equal(result.candidates[0].titleWordCoverage, 1);
+  assert.ok(result.candidates[1].titleWordCoverage < result.candidates[0].titleWordCoverage);
+  assert.ok(result.candidates[2].titleWordCoverage < result.candidates[0].titleWordCoverage);
+  assert.equal(result.bestCandidate, null);
+});
+
+
+test("OCR label words do not increase the separate title match score", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Soak",
+    brand: "Imperial Leather",
+    variant: "",
+    size: "",
+    pack: "",
+    imageTerms: "green bottle citrus refill",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Green bottle citrus refill");
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "uncertain", imageMatchScore: 48, reason: "The label is not fully legible." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.candidates[0].titleWordCoverage, 0);
+  assert.equal(result.candidates[0].imageMatchScore, 48);
+});
+
+test("image-only lookups leave the title score unscored", async () => {
+  const product = {
+    ean: "",
+    title: "",
+    brand: "",
+    variant: "",
+    size: "",
+    pack: "",
+    imageTerms: "green sponge pack",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "possible", imageMatchScore: 72, reason: "The green package is similar." }],
+    () => verifyAmazonCandidates(product, matchResponse([candidate("Green sponge pack")])),
+  );
+
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates[0].titleWordCoverage, undefined);
+  assert.equal(result.candidates[0].imageMatchScore, 72);
+});
+
+test("inconclusive imagery retains low-overlap options from the search results", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Muscle Soak Bergamot",
+    brand: "Imperial Leather",
+    variant: "",
+    size: "500ml",
+    pack: "4",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const closeTitle = candidate("Imperial Leather Muscle Soak Bergamot Limited Edition");
+  const categoryOnly = candidate("Bath soap products", { tier: "medium" });
+
+  const result = await withVisualEvaluations(
+    [
+      { index: 0, verdict: "uncertain", reason: "The label is too small to read." },
+      { index: 1, verdict: "uncertain", reason: "Only generic product type is visible." },
+    ],
+    () => verifyAmazonCandidates(product, matchResponse([closeTitle, categoryOnly])),
+  );
+
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates.find((item) => item.title === closeTitle.title).visualVerdict, "uncertain");
+  assert.ok(result.candidates.some((item) => item.title === categoryOnly.title));
+  assert.equal(result.candidates.find((item) => item.title === categoryOnly.title).tier, "low");
+});
+
+test("unavailable image checks never produce a confident title-only match", async () => {
+  const product = {
+    ean: "",
+    title: "Spontex Heavy Duty Scourer Pads",
+    brand: "Spontex",
+    variant: "",
+    size: "3pk",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Spontex Heavy Duty Scourer Pads 3pk Pack of 6", { tier: "medium" });
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "unavailable", imageMatchScore: null, reason: "The supplier image could not be loaded." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.status, "low");
+  assert.equal(result.bestCandidate, null);
+  assert.equal(result.candidates[0].tier, "low");
+  assert.equal(result.candidates[0].imageMatchScore, null);
+  assert.match(result.candidates[0].visualReason, /supplier image could not be loaded/i);
+});
+
+test("all returned listings are image-checked in bounded batches before choosing the top five", async () => {
+  const product = {
+    ean: "",
+    title: "Nivea Men Sensitive Shower Gel",
+    brand: "Nivea Men",
+    variant: "",
+    size: "250ml",
+    pack: "6",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const candidates = Array.from({ length: 7 }, (_, index) =>
+    candidate(`Nivea Men Sensitive Shower Gel 250ml Option ${index + 1}`, {
+      asin: `B000VIS0${index + 1}`,
+      packMatch: index === 6 ? false : true,
+      amazonPackCount: index === 6 ? 1 : 2,
+      amazonUnitPrice: "£2.00",
+      supplierPackEquivalentPrice: "£12.00",
+    }),
+  );
+  const originalFetch = globalThis.fetch;
+  const batches = [];
+  globalThis.fetch = async (_url, init) => {
+    const payload = JSON.parse(init.body);
+    batches.push(payload.candidates.length);
+    const offset = batches.length === 1 ? 0 : 5;
+    return new Response(
+      JSON.stringify({
+        evaluations: payload.candidates.map((_, index) => ({
+          index,
+          verdict: offset + index === 6 ? "strong" : "different",
+          imageMatchScore: offset + index === 6 ? 96 : 18,
+          reason: offset + index === 6 ? "The label and bottle shape align." : "The package differs.",
+        })),
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  try {
+    const result = await verifyAmazonCandidates(product, matchResponse(candidates));
+
+    assert.deepEqual(batches, [5, 2]);
+    assert.equal(result.scannedCandidateCount, 7);
+    assert.equal(result.candidates.length, 5);
+    assert.equal(result.candidates[0].asin, candidates[6].asin);
+    assert.equal(result.bestCandidate.asin, candidates[6].asin);
+    assert.equal(result.bestCandidate.tier, "medium");
+    assert.equal(result.bestCandidate.packMatch, false);
+    assert.equal(result.bestCandidate.supplierPackEquivalentPrice, "£12.00");
+    assert.match(result.bestCandidate.reason, /strong visual evidence/i);
+    assert.doesNotMatch(result.bestCandidate.reason, /pack count also needs review/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("all five low-overlap Amazon options remain available for manual selection", async () => {
+  const product = {
+    ean: "",
+    title: "Imperial Leather Bath Muscle Soak Bergamot Sensitive Aloe Botanical Celestial Herbal",
+    brand: "",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const candidates = Array.from({ length: 5 }, (_, index) =>
+    candidate(`Imperial Radox Body Wash Option ${index + 1}`, {
+      asin: `B000LOW0${index + 1}`,
+      brandMatch: false,
+    }),
+  );
+  const evaluations = candidates.map((_, index) => ({
+    index,
+    verdict: "different",
+    reason: "The package looks different from the source.",
+  }));
+
+  const result = await withVisualEvaluations(evaluations, () =>
+    verifyAmazonCandidates(product, matchResponse(candidates)),
+  );
+
+  assert.equal(result.status, "low");
+  assert.equal(result.candidates.length, 5);
+  assert.ok(result.candidates.every((item) => item.tier === "low"));
+  assert.ok(result.candidates.every((item) => item.titleWordCoverage < TITLE_WORD_MATCH_THRESHOLD));
+  assert.ok(result.candidates.every((item) => Math.round(item.titleWordCoverage * 100) === 10));
+});

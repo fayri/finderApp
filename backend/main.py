@@ -1159,17 +1159,12 @@ def match_product(product: MatchRequest):
     effective_product = product
 
     def ranked_candidates() -> list[dict[str, Any]]:
+        # Return ALL classified candidates from the search results, not just strict matches
         classified_candidates = [
             classify_candidate(effective_product, candidate)
             for candidate in candidates_by_key.values()
         ]
-        matches = [
-            candidate
-            for candidate in classified_candidates
-            if candidate["brandMatch"] and candidate["sizeMatch"]
-        ]
-        # Return ALL matches sorted by relevance, not limited to 5
-        return sorted(matches, key=candidate_sort_key, reverse=True)
+        return sorted(classified_candidates, key=candidate_sort_key, reverse=True)
 
     def search_and_collect(stage: str, query: str) -> bool:
         searched_queries.append({"stage": stage, "query": query})

@@ -7,6 +7,34 @@ import {
   updateAmazonTitleMatch,
   verifyAmazonCandidates,
 } from "./amazon-visual-matching.ts";
+import { buildAmazonProductSearchQuery } from "./amazon-search-url.ts";
+
+test("manual Amazon searches include missing brand and exact item size without pack count", () => {
+  const query = buildAmazonProductSearchQuery({
+    title: "Zoflora Disinfectant Lemon Zing",
+    brand: "Zoflora",
+    size: "120ml",
+  });
+
+  assert.equal(query, "Zoflora Disinfectant Lemon Zing 120ml");
+});
+
+test("manual Amazon searches do not mistake a different size for an exact match", () => {
+  const query = buildAmazonProductSearchQuery({ title: "Zoflora Concentrate 120ml", size: "20ml" });
+
+  assert.equal(query, "Zoflora Concentrate 120ml 20ml");
+});
+
+test("manual Amazon searches recognize multipack size in either order", () => {
+  assert.equal(
+    buildAmazonProductSearchQuery({ title: "Zoflora Lemon 4 x 120ml", size: "120 ml" }),
+    "Zoflora Lemon 4 x 120ml",
+  );
+  assert.equal(
+    buildAmazonProductSearchQuery({ title: "Zoflora Lemon 120ml x 4", size: "120ml" }),
+    "Zoflora Lemon 120ml x 4",
+  );
+});
 
 test("the full Amazon page title replaces a short search label in title scoring", () => {
   const listing = candidate("Spontex", {
@@ -338,7 +366,8 @@ test("all returned listings are image-checked in bounded batches before choosing
     assert.equal(result.bestCandidate.tier, "medium");
     assert.equal(result.bestCandidate.packMatch, false);
     assert.equal(result.bestCandidate.supplierPackEquivalentPrice, "£12.00");
-    assert.match(result.bestCandidate.reason, /pack count also needs review/i);
+    assert.match(result.bestCandidate.reason, /strong visual evidence/i);
+    assert.doesNotMatch(result.bestCandidate.reason, /pack count also needs review/i);
   } finally {
     globalThis.fetch = originalFetch;
   }

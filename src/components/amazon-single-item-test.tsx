@@ -4,7 +4,7 @@ import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowRight, Clock3, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { AmazonMatchCard } from "@/components/amazon-match-card";
 import { getApiErrorMessage } from "@/lib/amazon-api-errors";
-import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
+import { buildAmazonProductSearchQuery, buildAmazonSearchUrl } from "@/lib/amazon-search-url";
 import { verifyAmazonCandidates } from "@/lib/amazon-visual-matching";
 import type { AmazonMatchResponse, AmazonMatchRow, AmazonProductInput, AmazonSearchCandidate } from "@/lib/amazon-types";
 
@@ -39,7 +39,7 @@ export function AmazonSingleItemTest() {
       return;
     }
 
-    const initialSearchQuery = productTitle;
+    const initialSearchQuery = buildAmazonProductSearchQuery({ title: productTitle, size: productSize });
     setSearchUrl(initialSearchQuery ? buildAmazonSearchUrl(initialSearchQuery) : "");
     setErrorMessage("");
     setResult(null);
@@ -62,11 +62,11 @@ export function AmazonSingleItemTest() {
           if (!productTitle) {
             throw new Error(`${imageError}. Add a title to create an Amazon UK search URL.`);
           }
-          imageAnalysisWarning = `Image label reading was unavailable (${imageError}); the title, size, and pack were still searched.`;
+          imageAnalysisWarning = `Image label reading was unavailable (${imageError}); the title and item size were still searched.`;
         } else {
           imageTerms = typeof imagePayload.labelText === "string" ? imagePayload.labelText.trim() : "";
           if (!imageTerms) {
-            imageAnalysisWarning = "No readable product-label text was found; the supplied title, size, and pack were still searched.";
+            imageAnalysisWarning = "No readable product-label text was found; the supplied title and item size were still searched.";
           }
         }
       }
@@ -76,7 +76,11 @@ export function AmazonSingleItemTest() {
         throw new Error("The image did not provide searchable product details. Add the product title to continue.");
       }
 
-      const primarySearchQuery = [productTitle, imageTerms].filter(Boolean).join(" ");
+      const primarySearchQuery = buildAmazonProductSearchQuery({
+        title: productTitle,
+        imageTerms,
+        size: productSize,
+      });
       setSearchPhrase(primarySearchQuery);
       setSearchUrl(buildAmazonSearchUrl(primarySearchQuery));
       setStage("brand");
@@ -116,7 +120,14 @@ export function AmazonSingleItemTest() {
       const discoveredBrand = typeof match.discoveredBrand === "string" ? match.discoveredBrand.trim() : "";
       const resolvedProduct = { ...sourceProduct, brand: discoveredBrand };
       if (discoveredBrand && !primarySearchQuery.toLowerCase().includes(discoveredBrand.toLowerCase())) {
-        setSearchPhrase(`${discoveredBrand} ${primarySearchQuery}`);
+        const refinedSearchQuery = buildAmazonProductSearchQuery({
+          brand: discoveredBrand,
+          title: productTitle,
+          imageTerms,
+          size: productSize,
+        });
+        setSearchPhrase(refinedSearchQuery);
+        setSearchUrl(buildAmazonSearchUrl(refinedSearchQuery));
       }
       setStage("visual");
       const verifiedMatch = await verifyAmazonCandidates(resolvedProduct, match);
@@ -214,7 +225,8 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            When no brand is supplied, likely Amazon listings are opened one at a time to read the brand before a refined search. Title and image evidence stay separate; review the listing title, seller, size, and pack before confirming.
+              When no brand is supplied, likely Amazon listings are opened one at a time to read it before a refined search. Brand and exact item size narrow candidates; pack counts may differ. Title and image evidence stay separate and must also align.
+
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>
@@ -295,7 +307,7 @@ export function AmazonSingleItemTest() {
         </div>
         <div className="single-item-test-actions">
           <p id="single-item-image-note" className="single-item-test-note">
-            Images must be public HTTPS links and 5 MB or smaller. Readable label text is added to the title search; size and pack are checked against the listing.
+            Images must be public HTTPS links and 5 MB or smaller. Readable label text and item size narrow the search; pack count may differ. Strong title and image evidence are required to confirm a match.
           </p>
           <button type="submit" className="primary-button single-item-test-button" disabled={isRunning}>
             {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : stage === "brand" ? "Finding the product brand…" : stage === "visual" ? "Comparing product images…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}

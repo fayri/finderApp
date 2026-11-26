@@ -233,7 +233,7 @@ export function updateAmazonTitleMatch(
   const coverage = sourceTitle.trim() ? titleWordCoverage(sourceTitle, title) : null;
   const exactEan = candidate.eanMatch;
   const identityMismatches = candidateIdentityMismatch(candidate);
-  const reviewMismatches = candidate.packMatch === false ? [...identityMismatches, "pack count"] : identityMismatches;
+  const reviewMismatches = identityMismatches;
   const rawVisualVerdict = candidate.visualVerdict ?? "unavailable";
   const imageMatchScore = candidate.imageMatchScore ?? null;
   const strongVisualMatch = isStrongVisualMatch(rawVisualVerdict, imageMatchScore);
@@ -262,7 +262,7 @@ export function updateAmazonTitleMatch(
   };
 }
 
-function candidateRank(candidate: AmazonSearchCandidate): [number, number, number, number, number, number, number, number] {
+function candidateRank(candidate: AmazonSearchCandidate): [number, number, number, number, number, number, number] {
   const visualRank = candidate.visualVerdict === "strong"
     ? 4
     : candidate.visualVerdict === "possible"
@@ -277,9 +277,8 @@ function candidateRank(candidate: AmazonSearchCandidate): [number, number, numbe
   const sizeRank = candidate.sizeMatch ? 1 : 0;
   const variantRank = candidate.variantMatch === false ? 0 : 1;
   const brandRank = candidate.brandMatch === false ? 0 : 1;
-  const packRank = candidate.packMatch === false ? 0 : 1;
   const eanRank = candidate.eanMatch && candidate.visualVerdict !== "different" ? 1 : 0;
-  return [visualRank, imageScore, titleScore, sizeRank, variantRank, brandRank, packRank, eanRank];
+  return [visualRank, imageScore, titleScore, sizeRank, variantRank, brandRank, eanRank];
 }
 
 function compareCandidates(left: AmazonSearchCandidate, right: AmazonSearchCandidate): number {
@@ -316,7 +315,7 @@ export async function verifyAmazonCandidates(
     const exactEan = candidate.eanMatch;
     const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidateTitle);
     const identityMismatches = candidateIdentityMismatch(candidate);
-    const reviewMismatches = candidate.packMatch === false ? [...identityMismatches, "pack count"] : identityMismatches;
+    const reviewMismatches = identityMismatches;
     const visualScore = evaluation.imageMatchScore;
     const strongVisualMatch = isStrongVisualMatch(evaluation.verdict, visualScore);
     const visualVerdict = evaluation.verdict === "strong" && !strongVisualMatch ? "possible" : evaluation.verdict;

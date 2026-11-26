@@ -19,7 +19,7 @@ export function AmazonSingleItemTest() {
   const [size, setSize] = useState("");
   const [pack, setPack] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [stage, setStage] = useState<"image" | "search" | "visual" | null>(null);
+  const [stage, setStage] = useState<"image" | "brand" | "search" | "visual" | null>(null);
   const [isRetryingVisual, setIsRetryingVisual] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchPhrase, setSearchPhrase] = useState("");
@@ -79,7 +79,7 @@ export function AmazonSingleItemTest() {
       const primarySearchQuery = [productTitle, imageTerms].filter(Boolean).join(" ");
       setSearchPhrase(primarySearchQuery);
       setSearchUrl(buildAmazonSearchUrl(primarySearchQuery));
-      setStage("search");
+      setStage("brand");
       const matchResponse = await fetch("/api/amazon/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,10 +113,16 @@ export function AmazonSingleItemTest() {
         regalImageUrl: productImageUrl,
         imageTerms,
       };
+      const discoveredBrand = typeof match.discoveredBrand === "string" ? match.discoveredBrand.trim() : "";
+      const resolvedProduct = { ...sourceProduct, brand: discoveredBrand };
+      if (discoveredBrand && !primarySearchQuery.toLowerCase().includes(discoveredBrand.toLowerCase())) {
+        setSearchPhrase(`${discoveredBrand} ${primarySearchQuery}`);
+      }
       setStage("visual");
-      const verifiedMatch = await verifyAmazonCandidates(sourceProduct, match);
+      const verifiedMatch = await verifyAmazonCandidates(resolvedProduct, match);
       setResult({
-        ...sourceProduct,
+        ...resolvedProduct,
+        brandSource: discoveredBrand ? "amazon" : undefined,
         title: productTitle,
         regalImageUrl: verifiedMatch.regalImageUrl || productImageUrl,
         rowNumber: 0,
@@ -208,7 +214,7 @@ export function AmazonSingleItemTest() {
           <p className="section-kicker">Quick test · one product</p>
           <h2 id="single-item-test-title">Test a single item</h2>
           <p className="single-item-test-description">
-            Title and image matches are scored independently. Read the Amazon page&apos;s title, shipper / seller, and current price, then review the size and pack checks before confirming.
+            When no brand is supplied, likely Amazon listings are opened one at a time to read the brand before a refined search. Title and image evidence stay separate; review the listing title, seller, size, and pack before confirming.
           </p>
         </div>
         <span className="single-item-test-icon" aria-hidden="true"><ImageIcon size={17} /></span>
@@ -292,7 +298,7 @@ export function AmazonSingleItemTest() {
             Images must be public HTTPS links and 5 MB or smaller. Readable label text is added to the title search; size and pack are checked against the listing.
           </p>
           <button type="submit" className="primary-button single-item-test-button" disabled={isRunning}>
-            {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : stage === "visual" ? "Comparing product images…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}
+            {isRunning ? <><Clock3 size={15} aria-hidden="true" /> {stage === "image" ? "Analyzing image…" : stage === "brand" ? "Finding the product brand…" : stage === "visual" ? "Comparing product images…" : "Searching Amazon…"}</> : <>Test item <ArrowRight size={15} aria-hidden="true" /></>}
           </button>
         </div>
       </form>
@@ -307,7 +313,7 @@ export function AmazonSingleItemTest() {
           <code>{searchUrl}</code>
         </div>
       ) : null}
-      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building search details from the image…" : stage === "visual" ? "Comparing the source image with Amazon images…" : "Searching Amazon UK…"}</p> : null}
+      {isRunning ? <p className="single-item-test-status" role="status" aria-live="polite">{stage === "image" ? "Building search details from the image…" : stage === "brand" ? "Opening likely Amazon listings one at a time to read their brand details…" : stage === "visual" ? "Comparing the source image with Amazon images…" : "Searching Amazon UK…"}</p> : null}
       {result ? (
         <div className="single-item-test-result">
           <p className="single-item-search-phrase"><strong>Search phrase:</strong> {searchPhrase}</p>

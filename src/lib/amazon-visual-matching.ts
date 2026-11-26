@@ -311,9 +311,10 @@ export async function verifyAmazonCandidates(
   candidates.forEach((candidate, index) => {
     const evaluation = evaluations[index] ?? evaluationFallback(index);
     const sourceTitle = [product.brand, product.title, product.variant].filter(Boolean).join(" ");
-    const coverage = sourceTitle ? titleWordCoverage(sourceTitle, candidate.title) : null;
+    const candidateTitle = candidate.amazonTitle || candidate.title;
+    const coverage = sourceTitle ? titleWordCoverage(sourceTitle, candidateTitle) : null;
     const exactEan = candidate.eanMatch;
-    const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidate.title);
+    const titleFallback = titleMeetsFallbackThreshold(sourceTitle, candidateTitle);
     const identityMismatches = candidateIdentityMismatch(candidate);
     const reviewMismatches = candidate.packMatch === false ? [...identityMismatches, "pack count"] : identityMismatches;
     const visualScore = evaluation.imageMatchScore;

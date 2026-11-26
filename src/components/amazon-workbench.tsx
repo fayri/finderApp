@@ -54,7 +54,7 @@ interface MappedProduct extends AmazonProductInput {
 interface AmazonProgress {
   completed: number;
   total: number;
-  activeProducts: Array<{ key: string; title: string; stage: "label" | "search" | "visual" }>;
+  activeProducts: Array<{ key: string; title: string; stage: "label" | "brand" | "search" | "visual" }>;
 }
 
 const initialProgress: AmazonProgress = { completed: 0, total: 0, activeProducts: [] };
@@ -379,7 +379,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             ...current,
             activeProducts: [
               ...current.activeProducts,
-              { key: product.key, title: product.title || product.ean, stage: product.regalImageUrl ? "label" : "search" },
+              { key: product.key, title: product.title || product.ean, stage: product.regalImageUrl ? "label" : product.brand ? "search" : "brand" },
             ],
           }));
 
@@ -390,7 +390,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             setProgress((current) => ({
               ...current,
               activeProducts: current.activeProducts.map((activeProduct) =>
-                activeProduct.key === product.key ? { ...activeProduct, stage: "search" } : activeProduct,
+                activeProduct.key === product.key ? { ...activeProduct, stage: product.brand ? "search" : "brand" } : activeProduct,
               ),
             }));
 
@@ -417,16 +417,20 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
             }
 
             const matchPayload = payload as AmazonMatchResponse;
+            const discoveredBrand = typeof matchPayload.discoveredBrand === "string" ? matchPayload.discoveredBrand.trim() : "";
+            const resolvedBrand = product.brand || discoveredBrand;
+            const resolvedProduct = { ...matchProduct, brand: resolvedBrand };
             setProgress((current) => ({
               ...current,
               activeProducts: current.activeProducts.map((activeProduct) =>
                 activeProduct.key === product.key ? { ...activeProduct, stage: "visual" } : activeProduct,
               ),
             }));
-            const verifiedMatch = await verifyAmazonCandidates(matchProduct, matchPayload, controller.signal);
+            const verifiedMatch = await verifyAmazonCandidates(resolvedProduct, matchPayload, controller.signal);
             if (controller.signal.aborted) return;
             const rowResult: AmazonMatchRow = {
-              ...matchProduct,
+              ...resolvedProduct,
+              brandSource: product.brand ? "supplier" : discoveredBrand ? "amazon" : undefined,
               status: verifiedMatch.status,
               message: [verifiedMatch.message, labelResult.warning].filter(Boolean).join(" "),
               regalImageUrl: verifiedMatch.regalImageUrl || product.regalImageUrl,
@@ -563,10 +567,12 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const reviewCount = results.filter((result) => result.status === "medium" || result.status === "low").length;
   const notFoundCount = results.filter((result) => result.status === "not-found").length;
   const activeLabelCount = progress.activeProducts.filter((product) => product.stage === "label").length;
+  const activeBrandCount = progress.activeProducts.filter((product) => product.stage === "brand").length;
   const activeSearchCount = progress.activeProducts.filter((product) => product.stage === "search").length;
   const activeVisualCount = progress.activeProducts.filter((product) => product.stage === "visual").length;
   const activeProgressLabel = [
     activeLabelCount ? `Reading labels for ${activeLabelCount}` : "",
+    activeBrandCount ? `Checking product brands on Amazon for ${activeBrandCount}` : "",
     activeSearchCount ? `Searching Amazon for ${activeSearchCount}` : "",
     activeVisualCount ? `Comparing images for ${activeVisualCount}` : "",
   ].filter(Boolean).join(" · ");
@@ -591,7 +597,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
         </div>
         <div className="hero-note" aria-label="Search pacing note">
           <span className="hero-note-icon"><ShieldCheck size={18} /></span>
-          <span><strong>Two products at a time</strong><small>Amazon searches stay 3 seconds apart and stop on CAPTCHA blocks.</small></span>
+          <span><strong>Two products at a time</strong><small>Amazon page requests stay 3 seconds apart and stop on CAPTCHA blocks.</small></span>
         </div>
       </section>
 
@@ -704,7 +710,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
           <div className="crawl-note">
             <Clock3 size={17} aria-hidden="true" />
             <span>
-              Supplier ^ marks are removed before matching. Category only expands search. Every returned result on a searched Amazon page is compared before the five strongest options are shown; image evidence leads, with title, size, and pack checks retained for review. A single Amazon item can be compared with a supplier multipack using per-item and pack-equivalent prices. A confident result still needs a strong title match (at least 90% meaningful-word coverage), strong visual evidence (at least 85%), and no brand, variant, or size conflict; an EAN cannot override a visual mismatch. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
+              Supplier ^ marks are removed before matching. When no brand is supplied, the matcher checks likely Amazon detail pages one at a time before a brand-refined search. Category only expands search. Every returned result on a searched Amazon page is compared before the five strongest options are shown; image evidence leads, with title, size, and pack checks retained for review. A single Amazon item can be compared with a supplier multipack using per-item and pack-equivalent prices. A confident result still needs a strong title match (at least 90% meaningful-word coverage), strong visual evidence (at least 85%), and no brand, variant, or size conflict; an EAN cannot override a visual mismatch. Two products are processed at once, Amazon requests remain at least 3 seconds apart, and CAPTCHA/rate-limit responses stop the batch. Up to {MAX_PRODUCTS_PER_RUN} unique products per run.
             </span>
           </div>
           <button type="button" className="primary-button start-button" onClick={startMatching} disabled={!source || isParsing || isRunning || queueSize === 0}>

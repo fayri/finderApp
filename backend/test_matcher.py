@@ -143,6 +143,24 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["tier"], "low")
         self.assertFalse(result["sizeMatch"])
 
+    def test_size_units_are_normalized_but_different_quantities_do_not_match(self):
+        product = MatchRequest(title="Hydrating Hand Cream", brand="Northstar", size="100gm")
+
+        equivalent = classify_candidate(product, {"title": "Northstar Hydrating Hand Cream 100g"})
+        different = classify_candidate(product, {"title": "Northstar Hydrating Hand Cream 10g"})
+
+        self.assertTrue(equivalent["sizeMatch"])
+        self.assertFalse(different["sizeMatch"])
+
+    def test_pack_quantity_in_size_is_matched_exactly(self):
+        product = MatchRequest(title="Body Wipes", brand="Northstar", size="100pk")
+
+        equivalent = classify_candidate(product, {"title": "Northstar Body Wipes Pack of 100"})
+        different = classify_candidate(product, {"title": "Northstar Body Wipes Pack of 10"})
+
+        self.assertTrue(equivalent["sizeMatch"])
+        self.assertFalse(different["sizeMatch"])
+
     def test_nearby_title_is_retained_as_a_low_confidence_choice(self):
         product = MatchRequest(title="Antibacterial Hand Wash", brand="Northstar", size="250 ml")
         candidate = {
@@ -232,7 +250,6 @@ class MatcherTests(unittest.TestCase):
         html = '''
         <div data-component-type="s-search-result" data-asin="B012345678">
           <h2><a href="/dp/B012345678">Northstar Hand Cream 250ml</a></h2>
-          <img class="s-image" alt="Product photo unavailable" />
         </div>
         '''
 
@@ -358,8 +375,47 @@ class MatcherTests(unittest.TestCase):
 
         search.assert_called_once()
         self.assertEqual(result["scannedCandidateCount"], 12)
-        self.assertEqual(len(result["candidates"]), 12)
-        self.assertTrue(any(candidate["amazonPackCount"] == 1 for candidate in result["candidates"]))
+        self.assertEqual(len(result["candidates"]), 1)
+        self.assertEqual(result["candidates"][0]["amazonPackCount"], 6)
+        self.assertTrue(result["candidates"][0]["sizeMatch"])
+        self.assertTrue(result["candidates"][0]["packMatch"])
+
+    def test_lookup_excludes_size_and_pack_mismatches_then_ranks_five_closest(self):
+        titles = [
+            "Nivea Men Sensitive Shower Gel 500ml Pack of 3",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 10",
+            "Nivea Men Sensitive Shower Gel Pack of 3",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Limited Edition Value Pack",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Fresh Formula",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Sensitive Skin",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Daily Care",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 with Aloe",
+        ]
+        candidates = [
+            {
+                "asin": f"B00000{index:04d}",
+                "title": title,
+                "cardText": title,
+                "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+                "productUrl": f"https://www.amazon.co.uk/dp/B00000{index:04d}",
+                "price": "£2.00",
+            }
+            for index, title in enumerate(titles, start=1)
+        ]
+        product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="3")
+
+        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual(result["scannedCandidateCount"], len(titles))
+        self.assertEqual(len(result["candidates"]), 5)
+        self.assertTrue(all(candidate["sizeMatch"] and candidate["packMatch"] for candidate in result["candidates"]))
+        self.assertNotIn("500ml", " ".join(candidate["title"] for candidate in result["candidates"]))
+        self.assertNotIn("Pack of 10", " ".join(candidate["title"] for candidate in result["candidates"]))
+        scores = [candidate["titleScore"] for candidate in result["candidates"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertEqual(result["bestCandidate"]["asin"], "B000000007")
 
     def test_product_page_parser_extracts_brand_from_detail_row_and_store_byline(self):
         html = '''

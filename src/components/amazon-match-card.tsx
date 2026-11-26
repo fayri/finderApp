@@ -500,7 +500,7 @@ export function AmazonMatchCard({
                 <h4>{candidate ? "Top Amazon matches" : "No confident match yet"}</h4>
                 <p>
                   {candidate
-                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings from the result page. Only exact size and pack matches are shown, ranked by title similarity.`
+                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings. Exact size and pack matches are preferred; a matching single-item listing is shown when no exact supplier pack is found.`
                     : result.message || "Review the closest Amazon listings below."}
                 </p>
               </div>

@@ -105,6 +105,9 @@ function SourceProductReference({ result }: { result: AmazonMatchRow }) {
         <p className="amazon-compare-label">TITLE TO MATCH</p>
         <h4>{result.title || "No supplier title provided"}</h4>
         {sourceDetails.length ? <p className="amazon-compare-detail">{sourceDetails.join(" · ")}</p> : null}
+        {result.brandSource === "amazon" && result.brand ? (
+          <p className="amazon-label-text"><strong>Brand found:</strong> {result.brand} from Amazon product details</p>
+        ) : null}
         {result.imageTerms ? <p className="amazon-label-text"><strong>Label read:</strong> {result.imageTerms}</p> : null}
         {!result.regalImageUrl ? (
           <p className="amazon-source-image-warning" role="status">
@@ -204,6 +207,7 @@ function AmazonDetailsButton({
       const updatedCandidate = updateAmazonTitleMatch(sourceTitle, {
         ...candidate,
         amazonTitle: amazonTitle || candidate.amazonTitle,
+        amazonBrand: payload.amazonBrand.trim() || candidate.amazonBrand,
         seller: payload.seller.trim() || candidate.seller,
         price: payload.price.trim() || candidate.price,
         listingDetailsChecked: true,
@@ -368,6 +372,7 @@ function CandidateOption({
           <p className="amazon-candidate-search-title">Search result label: {candidate.title}</p>
         ) : null}
         <p className="amazon-candidate-detail">
+          <span><strong>Brand:</strong> {candidate.amazonBrand || (candidate.listingDetailsChecked ? "Not shown" : "Not checked")}</span>
           <span><strong>Shipper / seller:</strong> {sellerValue}</span>
           <span><strong>Amazon listing price:</strong> {candidate.price || "Not found"}</span>
           <span><strong>Pack quantity in listing:</strong> {candidate.amazonPackCount ?? "Not identified"}</span>

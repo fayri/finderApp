@@ -5,7 +5,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from main import AmazonBlocked, AmazonOfferRequest, MatchRequest, build_search_queries, classify_candidate, extract_amazon_candidates, extract_amazon_product_details, extract_seller_name, get_amazon_offer, match_product, search_amazon
+from main import AmazonBlocked, AmazonOfferRequest, MatchRequest, build_search_queries, classify_candidate, discover_product_brand, extract_amazon_candidates, extract_amazon_product_details, extract_seller_name, get_amazon_offer, match_product, search_amazon
 
 
 class MatcherTests(unittest.TestCase):
@@ -46,6 +46,19 @@ class MatcherTests(unittest.TestCase):
         self.assertTrue(result["variantMatch"])
         self.assertTrue(result["sizeMatch"])
         self.assertTrue(result["packMatch"])
+
+    def test_explicit_amazon_brand_can_confirm_brand_match(self):
+        product = MatchRequest(title="Gentle Hand Wash", brand="Carex")
+        candidate = {
+            "title": "Gentle Hand Wash 250ml",
+            "amazonBrand": "Carex",
+            "cardText": "Gentle Hand Wash 250ml",
+        }
+
+        result = classify_candidate(product, candidate)
+
+        self.assertTrue(result["brandMatch"])
+        self.assertEqual(result["tier"], "medium")
 
     def test_category_synonym_can_match_with_confirmed_size(self):
         product = MatchRequest(title="Soap", brand="Northstar", size="250 ml", category="soap_hygiene")
@@ -260,6 +273,72 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["amazonUnitPrice"], "£2.24")
         self.assertEqual(result["supplierPackEquivalentPrice"], "£13.43")
 
+    def test_lookup_reads_candidate_brands_then_refines_search(self):
+        first_page = [
+            {
+                "asin": "B012345678",
+                "title": "Gentle Hand Wash 250ml",
+                "cardText": "Gentle Hand Wash 250ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/one.jpg",
+                "productUrl": "https://www.amazon.co.uk/dp/B012345678",
+                "price": "£2.00",
+            },
+            {
+                "asin": "B012345679",
+                "title": "Gentle Hand Wash 250ml refill",
+                "cardText": "Gentle Hand Wash 250ml refill",
+                "imageUrl": "https://m.media-amazon.com/images/I/two.jpg",
+                "productUrl": "https://www.amazon.co.uk/dp/B012345679",
+                "price": "£2.10",
+            },
+        ]
+        refined_page = [
+            {
+                "asin": "B012345680",
+                "title": "Carex Gentle Hand Wash 250ml",
+                "cardText": "Carex Gentle Hand Wash 250ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/three.jpg",
+                "productUrl": "https://www.amazon.co.uk/dp/B012345680",
+                "price": "£2.20",
+            }
+        ]
+        detail_html = '''
+        <span id="productTitle">Carex Gentle Hand Wash 250ml</span>
+        <table id="productDetails_techSpec_section_1"><tr><th>Brand</th><td>Carex</td></tr></table>
+        '''
+        product = MatchRequest(title="Gentle Hand Wash", size="250ml")
+
+        with patch("main.search_amazon", side_effect=[first_page, refined_page]) as search, patch(
+            "main.fetch_amazon_page", side_effect=[detail_html, detail_html]
+        ) as fetch_detail, patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual(result["discoveredBrand"], "Carex")
+        self.assertEqual(search.call_count, 2)
+        self.assertIn("Carex", search.call_args_list[1].args[0])
+        self.assertEqual(fetch_detail.call_count, 2)
+        self.assertEqual(fetch_detail.call_args_list[0].args[0], "https://www.amazon.co.uk/dp/B012345678")
+        self.assertEqual(fetch_detail.call_args_list[1].args[0], "https://www.amazon.co.uk/dp/B012345679")
+        self.assertTrue(any(candidate["amazonBrand"] == "Carex" for candidate in result["candidates"]))
+
+    def test_one_weak_listing_brand_does_not_become_the_source_brand(self):
+        product = MatchRequest(title="Hand Wash Sensitive")
+        candidate = {
+            "asin": "B012345678",
+            "title": "Carex Hand Wash",
+            "cardText": "Carex Hand Wash",
+            "imageUrl": "https://m.media-amazon.com/images/I/example.jpg",
+            "productUrl": "https://www.amazon.co.uk/dp/B012345678",
+        }
+        detail_html = '''
+        <table id="productDetails_techSpec_section_1"><tr><th>Brand</th><td>Carex</td></tr></table>
+        '''
+
+        with patch("main.fetch_amazon_page", return_value=detail_html):
+            brand = discover_product_brand(product, {candidate["asin"]: candidate})
+
+        self.assertEqual(brand, "")
+
     def test_lookup_scans_the_full_first_relevant_result_page(self):
         candidates = [
             {
@@ -281,6 +360,20 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["scannedCandidateCount"], 12)
         self.assertEqual(len(result["candidates"]), 12)
         self.assertTrue(any(candidate["amazonPackCount"] == 1 for candidate in result["candidates"]))
+
+    def test_product_page_parser_extracts_brand_from_detail_row_and_store_byline(self):
+        html = '''
+        <span id="productTitle">Carex Gentle Hand Wash 250ml</span>
+        <a id="bylineInfo">Visit the Carex Store</a>
+        <table id="productDetails_techSpec_section_1">
+          <tr><th>Brand</th><td>Carex</td></tr>
+        </table>
+        '''
+
+        details = extract_amazon_product_details(html)
+
+        self.assertEqual(details["amazonBrand"], "Carex")
+        self.assertEqual(details["amazonTitle"], "Carex Gentle Hand Wash 250ml")
 
     def test_product_page_parser_extracts_full_title_seller_and_current_price(self):
         html = '''
@@ -309,9 +402,10 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(details["seller"], "Amazon")
         self.assertEqual(details["price"], "£7.68")
 
-    def test_offer_lookup_returns_full_listing_details(self):
+    def test_offer_lookup_returns_full_listing_details_including_brand(self):
         html = '''
         <span id="productTitle">Spontex Heavy Duty Scourer Pads, Pack of 3</span>
+        <a id="bylineInfo">Visit the Spontex Store</a>
         <a id="sellerProfileTriggerId">Amazon.co.uk</a>
         <div id="corePrice_feature_div"><span class="a-offscreen">£2.49</span></div>
         '''
@@ -324,6 +418,7 @@ class MatcherTests(unittest.TestCase):
             "The Amazon UK listing details could not be reached. Try again later.",
         )
         self.assertEqual(result["status"], "found")
+        self.assertEqual(result["amazonBrand"], "Spontex")
         self.assertEqual(result["amazonTitle"], "Spontex Heavy Duty Scourer Pads, Pack of 3")
         self.assertEqual(result["seller"], "Amazon.co.uk")
         self.assertEqual(result["price"], "£2.49")

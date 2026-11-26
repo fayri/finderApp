@@ -36,6 +36,7 @@ export interface AmazonSearchCandidate {
   imageMatchScore?: number | null;
   titleWordCoverage?: number;
   amazonTitle?: string;
+  amazonBrand?: string;
   seller?: string;
   listingDetailsChecked?: boolean;
   listingDetailsMessage?: string;
@@ -46,6 +47,7 @@ export interface AmazonOfferDetailsResponse {
   status: "found" | "partial" | "blocked" | "error";
   message: string;
   amazonTitle: string;
+  amazonBrand: string;
   seller: string;
   price: string;
 }
@@ -54,6 +56,7 @@ export interface AmazonMatchResponse {
   status: AmazonMatchStatus;
   message: string;
   regalImageUrl: string;
+  discoveredBrand?: string;
   bestCandidate: AmazonSearchCandidate | null;
   candidates: AmazonSearchCandidate[];
   scannedCandidateCount?: number;
@@ -61,6 +64,7 @@ export interface AmazonMatchResponse {
 }
 
 export interface AmazonMatchRow extends AmazonProductInput {
+  brandSource?: "supplier" | "amazon";
   rowNumber: number;
   key: string;
   status: AmazonMatchStatus;

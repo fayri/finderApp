@@ -24,6 +24,7 @@ AMAZON_TIMEOUT_SECONDS = 15
 AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_SEARCH_QUERIES = 5
+MAX_BRAND_DETAIL_LOOKUPS = 3
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
 )["categories"]
@@ -220,7 +221,7 @@ def exact_ean_in_text(ean: str, value: str) -> bool:
 
 
 def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict[str, Any]:
-    candidate_title = normalize_text(str(candidate.get("title", "")))
+    candidate_title = normalize_text(str(candidate.get("amazonTitle") or candidate.get("title", "")))
     listing_text = str(candidate.get("cardText", ""))
     candidate_tokens = tokens(candidate_title)
     product_tokens = tokens(clean_title(" ".join(part for part in (product.title, product.image_terms) if part)))
@@ -245,7 +246,8 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     )
     title_score = round(max(direct_title_score, 0.52 if semantic_title_match else 0), 3)
 
-    brand_match = not brand_tokens or brand_tokens.issubset(candidate_tokens)
+    amazon_brand_tokens = tokens(clean_title(str(candidate.get("amazonBrand", ""))))
+    brand_match = not brand_tokens or brand_tokens.issubset(candidate_tokens) or brand_tokens.issubset(amazon_brand_tokens)
     variant_match = not variant_tokens or variant_tokens.issubset(candidate_tokens)
     expected_measurements = measurements(product.size)
     size_match = not product.size or (
@@ -439,8 +441,69 @@ def amazon_card_title(title_tag, link, image_tag) -> str:
     return max(titles, key=len, default="")
 
 
+def clean_amazon_brand(value: str) -> str:
+    brand = normalize_text(value).strip(" :|-")
+    brand = re.sub(r"^brand(?:\s+name)?\s*:\s*", "", brand, flags=re.IGNORECASE)
+    brand = re.sub(r"^visit\s+the\s+(.+?)\s+store$", r"\1", brand, flags=re.IGNORECASE)
+    brand = normalize_text(brand).strip(" :|-")
+    if not brand or len(brand) > 120 or brand.casefold() in {"not applicable", "n/a", "unknown"}:
+        return ""
+    return brand
+
+
+def extract_amazon_brand(soup: BeautifulSoup) -> str:
+    for row in soup.select(
+        "#productOverview_feature_div tr, #productDetails_techSpec_section_1 tr, "
+        "#productDetails_detailBullets_sections1 tr, #technicalSpecifications_section_1 tr"
+    ):
+        cells = row.find_all(["th", "td"])
+        if len(cells) >= 2 and normalize_text(cells[0].get_text(" ", strip=True)).rstrip(":").casefold() in {"brand", "brand name"}:
+            brand = clean_amazon_brand(cells[1].get_text(" ", strip=True))
+            if brand:
+                return brand
+
+    for item in soup.select("#detailBullets_feature_div li, #detailBulletsWrapper_feature_div li"):
+        label = item.select_one(".a-text-bold")
+        if label and normalize_text(label.get_text(" ", strip=True)).rstrip(":").casefold() in {"brand", "brand name"}:
+            item_text = normalize_text(item.get_text(" ", strip=True))
+            brand = clean_amazon_brand(re.sub(r"^brand(?:\s+name)?\s*:\s*", "", item_text, flags=re.IGNORECASE))
+            if brand:
+                return brand
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            structured_data = json.loads(script.string or script.get_text())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        pending = [structured_data]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, dict):
+                brand_value = value.get("brand")
+                if isinstance(brand_value, str):
+                    brand = clean_amazon_brand(brand_value)
+                    if brand:
+                        return brand
+                elif isinstance(brand_value, dict):
+                    brand = clean_amazon_brand(str(brand_value.get("name", "")))
+                    if brand:
+                        return brand
+                pending.extend(value.values())
+
+    for selector in ("#bylineInfo", "#bylineInfo_feature_div a"):
+        byline = soup.select_one(selector)
+        if byline:
+            brand = clean_amazon_brand(byline.get_text(" ", strip=True))
+            if brand:
+                return brand
+    return ""
+
+
 def extract_amazon_product_details(html: str) -> dict[str, str]:
     soup = BeautifulSoup(html, "html.parser")
+    brand = extract_amazon_brand(soup)
     title_tag = soup.select_one("#productTitle") or soup.select_one("h1")
     title = normalize_text(title_tag.get_text(" ", strip=True)) if title_tag else ""
     if not title:
@@ -484,7 +547,7 @@ def extract_amazon_product_details(html: str) -> dict[str, str]:
             if price:
                 break
 
-    return {"amazonTitle": title, "seller": seller, "price": price}
+    return {"amazonTitle": title, "amazonBrand": brand, "seller": seller, "price": price}
 
 
 def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
@@ -635,12 +698,13 @@ def get_amazon_offer(request: AmazonOfferRequest):
         )
         details = extract_amazon_product_details(html_text)
     except AmazonBlocked as error:
-        return {"status": "blocked", "message": str(error), "amazonTitle": "", "seller": "", "price": ""}
+        return {"status": "blocked", "message": str(error), "amazonTitle": "", "amazonBrand": "", "seller": "", "price": ""}
     except (RuntimeError, ValueError) as error:
         return {
             "status": "error",
             "message": str(error) or "The Amazon UK listing details could not be read.",
             "amazonTitle": "",
+            "amazonBrand": "",
             "seller": "",
             "price": "",
         }
@@ -653,7 +717,9 @@ def get_amazon_offer(request: AmazonOfferRequest):
     message = (
         f"Amazon did not show the {' and '.join(missing_fields)} on this product page."
         if missing_fields
-        else "Full title, seller, and price read from the Amazon product page."
+        else "Full title, brand, seller, and price read from the Amazon product page."
+        if details["amazonBrand"]
+        else "Full title, seller, and price read from the Amazon product page; brand not shown."
     )
     return {"status": "found" if not missing_fields else "partial", "message": message, **details}
 
@@ -703,6 +769,71 @@ def candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, float]:
     return (priority, float(candidate.get("titleScore", 0)))
 
 
+def discover_product_brand(product: MatchRequest, candidates_by_key: dict[str, dict[str, Any]]) -> str:
+    if product.brand:
+        return ""
+
+    candidates_to_check: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    for candidate in candidates_by_key.values():
+        preliminary = classify_candidate(product, candidate)
+        asin = str(candidate.get("asin", "")).strip().upper() or asin_from_href(str(candidate.get("productUrl", "")))
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+            continue
+        if not preliminary["eanMatch"] and float(preliminary["titleScore"]) < 0.3:
+            continue
+        candidate["asin"] = asin
+        candidates_to_check.append((candidate, preliminary, asin))
+
+    candidates_to_check.sort(key=lambda entry: candidate_sort_key(entry[1]), reverse=True)
+    brand_votes: dict[str, dict[str, Any]] = {}
+
+    for candidate, preliminary, asin in candidates_to_check[:MAX_BRAND_DETAIL_LOOKUPS]:
+        try:
+            html_text = fetch_amazon_page(
+                f"{AMAZON_ORIGIN}/dp/{asin}",
+                "The Amazon UK product details could not be reached. Try again later.",
+            )
+            details = extract_amazon_product_details(html_text)
+        except AmazonBlocked:
+            raise
+        except (requests.RequestException, RuntimeError, ValueError):
+            candidate["listingDetailsChecked"] = True
+            candidate["listingDetailsMessage"] = "Amazon product details could not be read for brand discovery."
+            continue
+
+        candidate.update({key: value for key, value in details.items() if value})
+        candidate["listingDetailsChecked"] = True
+        candidate["listingDetailsMessage"] = (
+            "Brand and listing details read from the Amazon product page."
+            if details["amazonBrand"]
+            else "Amazon product details were checked, but no brand was shown."
+        )
+        brand = details["amazonBrand"]
+        if not brand:
+            continue
+
+        normalized_brand = re.sub(r"[^\w]+", " ", brand.casefold(), flags=re.UNICODE).strip()
+        is_strong_source_candidate = bool(
+            preliminary["eanMatch"]
+            or (
+                float(preliminary["titleScore"]) >= 0.8
+                and preliminary["sizeMatch"]
+                and preliminary["variantMatch"]
+            )
+        )
+        vote = brand_votes.setdefault(normalized_brand, {"brand": brand, "count": 0, "strong": False})
+        vote["count"] += 1
+        vote["strong"] = vote["strong"] or is_strong_source_candidate
+        if vote["count"] >= 2:
+            return str(vote["brand"])
+
+    accepted = [vote for vote in brand_votes.values() if vote["count"] >= 2 or vote["strong"]]
+    if not accepted:
+        return ""
+    accepted.sort(key=lambda vote: (vote["count"], vote["strong"]), reverse=True)
+    return str(accepted[0]["brand"])
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -710,8 +841,8 @@ def health():
 
 @app.post("/api/amazon/match")
 def match_product(product: MatchRequest):
-    queries = build_search_queries(product)
-    if not queries:
+    initial_queries = build_search_queries(product)
+    if not initial_queries:
         return {
             "status": "not-found",
             "message": "Add an EAN or product title before searching Amazon UK.",
@@ -720,40 +851,84 @@ def match_product(product: MatchRequest):
             "candidates": [],
             "scannedCandidateCount": 0,
             "searchedQueries": [],
+            "discoveredBrand": "",
         }
 
     regal_image_url = safe_regal_url(product.regal_image_url) or get_regal_image(product.ean)
     candidates_by_key: dict[str, dict[str, Any]] = {}
     searched_queries: list[dict[str, str]] = []
+    searched_query_keys: set[str] = set()
+    discovered_brand = ""
+    effective_product = product
+
+    def ranked_candidates() -> list[dict[str, Any]]:
+        classified_candidates = [
+            classify_candidate(effective_product, candidate)
+            for candidate in candidates_by_key.values()
+        ]
+        return sorted(classified_candidates, key=candidate_sort_key, reverse=True)
+
+    def search_and_collect(stage: str, query: str) -> bool:
+        searched_queries.append({"stage": stage, "query": query})
+        searched_query_keys.add(query.casefold())
+        page_has_relevant_candidate = False
+        page_candidates = search_amazon(query, product.ean)
+        for raw_candidate in page_candidates:
+            classified = classify_candidate(effective_product, raw_candidate)
+            if not classified:
+                continue
+
+            raw_candidate = {**raw_candidate, "searchedBy": stage}
+            key = classified.get("asin") or classified.get("productUrl") or classified["title"].casefold()
+            existing = candidates_by_key.get(key)
+            if existing is None or candidate_sort_key(classified) > candidate_sort_key(classify_candidate(effective_product, existing)):
+                if existing:
+                    for field in (
+                        "amazonTitle",
+                        "amazonBrand",
+                        "seller",
+                        "price",
+                        "listingDetailsChecked",
+                        "listingDetailsMessage",
+                    ):
+                        if existing.get(field) and not raw_candidate.get(field):
+                            raw_candidate[field] = existing[field]
+                candidates_by_key[key] = raw_candidate
+
+            page_has_relevant_candidate = page_has_relevant_candidate or bool(
+                classified["eanMatch"]
+                or (
+                    classified["brandMatch"]
+                    and classified["sizeMatch"]
+                    and float(classified["titleScore"]) >= 0.45
+                )
+            )
+        return page_has_relevant_candidate
 
     try:
-        for stage, query in queries:
-            searched_queries.append({"stage": stage, "query": query})
-            page_has_relevant_candidate = False
-            page_candidates = search_amazon(query, product.ean)
-            for raw_candidate in page_candidates:
-                classified = classify_candidate(product, raw_candidate)
-                if not classified:
-                    continue
-                classified["searchedBy"] = stage
-                key = classified.get("asin") or classified.get("productUrl") or classified["title"].casefold()
-                existing = candidates_by_key.get(key)
-                if existing is None or candidate_sort_key(classified) > candidate_sort_key(existing):
-                    candidates_by_key[key] = classified
-
-                page_has_relevant_candidate = page_has_relevant_candidate or bool(
-                    classified["eanMatch"]
-                    or (
-                        classified["brandMatch"]
-                        and classified["sizeMatch"]
-                        and float(classified["titleScore"]) >= 0.45
-                    )
-                )
-
+        discovery_needed = not product.brand
+        probe_queries = initial_queries[:2] if discovery_needed else initial_queries
+        for stage, query in probe_queries:
+            page_has_relevant_candidate = search_and_collect(stage, query)
             if page_has_relevant_candidate:
                 break
+
+        if discovery_needed and candidates_by_key:
+            discovered_brand = discover_product_brand(product, candidates_by_key)
+            if discovered_brand:
+                effective_product = product.model_copy(update={"brand": discovered_brand})
+
+        if discovery_needed:
+            for stage, query in build_search_queries(effective_product):
+                if query.casefold() in searched_query_keys or len(searched_queries) >= MAX_SEARCH_QUERIES:
+                    continue
+                page_has_relevant_candidate = search_and_collect(stage, query)
+                if not page_has_relevant_candidate:
+                    continue
+                if discovered_brand and tokens(discovered_brand).issubset(tokens(query)):
+                    break
     except AmazonBlocked as error:
-        candidates = sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)
+        candidates = ranked_candidates()
         return {
             "status": "blocked",
             "message": str(error),
@@ -762,9 +937,10 @@ def match_product(product: MatchRequest):
             "candidates": candidates,
             "scannedCandidateCount": len(candidates),
             "searchedQueries": searched_queries,
+            "discoveredBrand": discovered_brand,
         }
     except (requests.RequestException, RuntimeError, ValueError) as error:
-        candidates = sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)
+        candidates = ranked_candidates()
         return {
             "status": "error",
             "message": str(error) or "The Amazon UK search could not be completed.",
@@ -773,9 +949,10 @@ def match_product(product: MatchRequest):
             "candidates": candidates,
             "scannedCandidateCount": len(candidates),
             "searchedQueries": searched_queries,
+            "discoveredBrand": discovered_brand,
         }
 
-    candidates = sorted(candidates_by_key.values(), key=candidate_sort_key, reverse=True)
+    candidates = ranked_candidates()
     if not candidates:
         return {
             "status": "not-found",
@@ -785,15 +962,20 @@ def match_product(product: MatchRequest):
             "candidates": [],
             "scannedCandidateCount": 0,
             "searchedQueries": searched_queries,
+            "discoveredBrand": discovered_brand,
         }
 
     best = candidates[0]
+    message = best["reason"]
+    if discovered_brand:
+        message = f"{message} Brand identified from Amazon product details: {discovered_brand}."
     return {
         "status": best["tier"],
-        "message": best["reason"],
+        "message": message,
         "regalImageUrl": regal_image_url,
         "bestCandidate": best,
         "candidates": candidates,
         "scannedCandidateCount": len(candidates),
         "searchedQueries": searched_queries,
+        "discoveredBrand": discovered_brand,
     }

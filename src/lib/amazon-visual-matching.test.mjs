@@ -102,6 +102,30 @@ async function withVisualEvaluations(evaluations, callback) {
   }
 }
 
+test("brand-discovered full listing titles drive the visual title gate", async () => {
+  const product = {
+    ean: "",
+    title: "Gentle Hand Wash",
+    brand: "Carex",
+    variant: "",
+    size: "",
+    pack: "",
+    regalImageUrl: "https://regalsales.co.uk/product/image/source.jpg",
+  };
+  const listing = candidate("Carex", {
+    amazonTitle: "Carex Gentle Hand Wash 250ml",
+    amazonBrand: "Carex",
+  });
+
+  const result = await withVisualEvaluations(
+    [{ index: 0, verdict: "strong", imageMatchScore: 94, reason: "The packaging and Carex label match the source." }],
+    () => verifyAmazonCandidates(product, matchResponse([listing])),
+  );
+
+  assert.equal(result.bestCandidate.tier, "medium");
+  assert.equal(result.bestCandidate.titleWordCoverage, 1);
+});
+
 test("visual conflicts stay visible for review while the stronger item ranks first", async () => {
   const product = {
     ean: "",

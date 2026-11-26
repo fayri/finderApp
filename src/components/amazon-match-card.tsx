@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import Image from "next/image";
 import { BadgeCheck, Check, CircleHelp, ExternalLink, ImageOff, LoaderCircle, RotateCw, SearchX, ShieldAlert, X } from "lucide-react";
 import type { AmazonMatchRow, AmazonOfferDetailsResponse, AmazonSearchCandidate } from "@/lib/amazon-types";
-import { buildAmazonSearchUrl } from "@/lib/amazon-search-url";
+import { buildAmazonProductSearchQuery, buildAmazonSearchUrl } from "@/lib/amazon-search-url";
 import { updateAmazonTitleMatch } from "@/lib/amazon-visual-matching";
 
 interface AmazonMatchCardProps {
@@ -36,8 +36,15 @@ const statusLabels = {
 } as const;
 
 function amazonSearchUrl(result: AmazonMatchRow): string {
-  const query = [result.title, result.imageTerms].filter(Boolean).join(" ");
-  return buildAmazonSearchUrl(query);
+  return buildAmazonSearchUrl(
+    buildAmazonProductSearchQuery({
+      brand: result.brand,
+      title: result.title,
+      variant: result.variant,
+      imageTerms: result.imageTerms,
+      size: result.size,
+    }),
+  );
 }
 
 function imageSource(src: string): string {
@@ -133,15 +140,22 @@ function AttributeMatchSummary({ result, candidate }: { result: AmazonMatchRow; 
     <div className="amazon-attribute-checks" role="list" aria-label="Quick supplier attribute checks">
       {attributes.map(({ label, value, match }) => {
         const isSingleItemFallback = label === "Pack" && candidate.packMatchType === "single-item-fallback";
-        const state = match === true ? "match" : match === false ? "mismatch" : "unknown";
-        const stateLabel = isSingleItemFallback
-          ? "Single-item fallback"
-          : match === true
-            ? "Match"
-            : match === false
-              ? "Mismatch"
-              : "Check";
-        const displayValue = isSingleItemFallback ? `${value} (single-item fallback)` : value;
+        const packDifferenceAllowed = label === "Pack" && match === false;
+        const state = match === true || packDifferenceAllowed ? "match" : match === false ? "mismatch" : "unknown";
+        const stateLabel = packDifferenceAllowed
+          ? "Allowed difference"
+          : isSingleItemFallback
+            ? "Single-item fallback"
+            : match === true
+              ? "Match"
+              : match === false
+                ? "Mismatch"
+                : "Check";
+        const displayValue = packDifferenceAllowed
+          ? `${value} (pack count may differ)`
+          : isSingleItemFallback
+            ? `${value} (single-item fallback)`
+            : value;
         return (
           <span
             key={label}
@@ -341,8 +355,8 @@ function CandidateOption({
         </div>
         <div className="amazon-candidate-quick-checks" aria-label="Size and pack review">
           <span className={candidate.sizeMatch ? "is-match" : "is-review"}>Size {candidate.sizeMatch ? "match" : "review"}</span>
-          <span className={candidate.packMatch === false ? "is-review" : "is-match"}>
-            Pack {candidate.packMatchType === "single-item-fallback" ? "single-item fallback" : candidate.packMatch === false ? "differs" : "match"}
+          <span className="is-match">
+            Pack {candidate.packMatchType === "single-item-fallback" ? "single-item fallback" : candidate.packMatch === false ? "differs · allowed" : "match"}
           </span>
         </div>
         <button
@@ -500,7 +514,7 @@ export function AmazonMatchCard({
                 <h4>{candidate ? "Top Amazon matches" : "No confident match yet"}</h4>
                 <p>
                   {candidate
-                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings. Exact size and pack matches are preferred; a matching single-item listing is shown when no exact supplier pack is found.`
+                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings. The known brand and supplied item size guide filtering; pack count may differ. Title and image evidence determine match confidence.`
                     : result.message || "Review the closest Amazon listings below."}
                 </p>
               </div>

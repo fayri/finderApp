@@ -5,7 +5,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from main import AmazonBlocked, AmazonOfferRequest, MatchRequest, build_search_queries, classify_candidate, discover_product_brand, extract_amazon_candidates, extract_amazon_product_details, extract_seller_name, get_amazon_offer, match_product, search_amazon
+from main import AmazonBlocked, AmazonOfferRequest, MatchRequest, build_search_queries, classify_candidate, discover_product_brand, extract_amazon_candidates, extract_amazon_pack_components, extract_amazon_product_details, extract_seller_name, get_amazon_offer, match_product, search_amazon
 
 
 class MatcherTests(unittest.TestCase):
@@ -99,7 +99,7 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(queries[0], ("detail", "Northstar Gentle Handwash"))
         self.assertTrue(all("^" not in query for _, query in queries))
 
-    def test_image_terms_supplement_title_size_and_pack_search(self):
+    def test_image_terms_supplement_title_and_size_without_requiring_pack_match(self):
         product = MatchRequest(
             title="Carex Antibacterial Sensitive Handwash",
             image_terms="Carex purple pump bottle sensitive hand soap",
@@ -114,7 +114,47 @@ class MatcherTests(unittest.TestCase):
         self.assertIn("Carex Antibacterial Sensitive Handwash", image_query)
         self.assertIn("purple pump bottle sensitive", image_query)
         self.assertIn("250ml", image_query)
-        self.assertIn("1", image_query)
+        self.assertNotIn("1", image_query)
+
+    def test_size_is_added_to_search_when_title_omits_it_and_pack_is_not_required(self):
+        product = MatchRequest(
+            title="Zoflora Disinfectant Lemon Zing",
+            brand="Zoflora",
+            size="120ml",
+            pack="6",
+        )
+
+        queries = build_search_queries(product)
+
+        self.assertEqual(queries[0][0], "detail")
+        self.assertIn("120ml", queries[0][1])
+        self.assertNotIn("6", queries[0][1])
+
+    def test_multipack_size_is_read_in_both_quantity_orders(self):
+        product = MatchRequest(title="Zoflora Disinfectant Lemon Zing", brand="Zoflora", size="120ml", pack="6")
+
+        for title in (
+            "Zoflora Disinfectant Lemon Zing 4 x 120ml",
+            "Zoflora Disinfectant Lemon Zing 120ml x 4",
+        ):
+            with self.subTest(title=title):
+                result = classify_candidate(product, {"title": title})
+                self.assertTrue(result["sizeMatch"])
+                self.assertEqual(result["amazonPackCount"], 4)
+                self.assertFalse(result["packMatch"])
+                self.assertIn("Pack count differs and is allowed", result["reason"])
+
+    def test_size_is_inferred_from_title_when_the_size_column_is_empty(self):
+        product = MatchRequest(
+            title="Zoflora Disinfectant Lemon Zing 4x120ml",
+            brand="Zoflora",
+            pack="6",
+        )
+
+        result = classify_candidate(product, {"title": "Zoflora Disinfectant Lemon Zing 120ml x 4"})
+
+        self.assertTrue(result["sizeMatch"])
+        self.assertEqual(result["amazonPackCount"], 4)
 
     def test_label_terms_improve_candidate_title_matching(self):
         product = MatchRequest(title="Hand Wash", image_terms="Carex Antibacterial Sensitive", brand="Carex")
@@ -344,7 +384,7 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["packMatchType"], "single-item-fallback")
         self.assertTrue(result["candidates"][0]["packMatch"])
 
-    def test_exact_pack_results_are_preferred_over_single_item_fallbacks(self):
+    def test_pack_variations_are_retained_when_brand_and_size_match(self):
         product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
         candidates = [
             {
@@ -368,8 +408,9 @@ class MatcherTests(unittest.TestCase):
         with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
             result = match_product(product)
 
-        self.assertEqual([candidate["asin"] for candidate in result["candidates"]], ["B000000002"])
-        self.assertEqual(result["candidates"][0]["packMatchType"], "exact")
+        self.assertEqual({candidate["asin"] for candidate in result["candidates"]}, {"B000000001", "B000000002"})
+        self.assertEqual(result["candidates"][0]["packMatchType"], "single-item-fallback")
+        self.assertEqual(result["candidates"][1]["packMatchType"], "exact")
 
     def test_multipack_price_is_normalized_to_an_individual_item(self):
         product = MatchRequest(title="Sensitive Shower Gel", brand="Nivea Men", size="250ml", pack="6")
@@ -385,6 +426,50 @@ class MatcherTests(unittest.TestCase):
         self.assertEqual(result["amazonPackCount"], 4)
         self.assertEqual(result["amazonUnitPrice"], "£2.24")
         self.assertEqual(result["supplierPackEquivalentPrice"], "£13.43")
+
+    def test_zoflora_match_keeps_four_by_120ml_pack_despite_supplier_pack_difference(self):
+        product = MatchRequest(
+            title="Zoflora Disinfectant - Lemon Zing (wsl)",
+            brand="Zoflora",
+            size="120ml",
+            pack="6",
+        )
+        candidates = [
+            {
+                "asin": "B000000011",
+                "title": "Radox Disinfectant Lemon Zing 120ml",
+                "cardText": "Radox Disinfectant Lemon Zing 120ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/other-brand.jpg",
+            },
+            {
+                "asin": "B000000012",
+                "title": "Zoflora Disinfectant Lemon Zing 500ml",
+                "cardText": "Zoflora Disinfectant Lemon Zing 500ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/wrong-size.jpg",
+            },
+            {
+                "asin": "B000000013",
+                "title": "Zoflora Concentrated Disinfectant 4 x 120ml Lemon Zing Pack of 4",
+                "cardText": "Zoflora Concentrated Disinfectant 4 x 120ml Lemon Zing Pack of 4",
+                "imageUrl": "https://m.media-amazon.com/images/I/lemon-zing.jpg",
+            },
+            {
+                "asin": "B000000014",
+                "title": "Zoflora Country Garden Concentrated Disinfectant 120ml",
+                "cardText": "Zoflora Country Garden Concentrated Disinfectant 120ml",
+                "imageUrl": "https://m.media-amazon.com/images/I/country-garden.jpg",
+            },
+        ]
+
+        with patch("main.search_amazon", return_value=candidates), patch("main.get_regal_image", return_value=""):
+            result = match_product(product)
+
+        self.assertEqual(result["bestCandidate"]["asin"], "B000000013")
+        self.assertEqual(result["bestCandidate"]["amazonPackCount"], 4)
+        self.assertFalse(result["bestCandidate"]["packMatch"])
+        self.assertTrue(all(candidate["brandMatch"] and candidate["sizeMatch"] for candidate in result["candidates"]))
+        self.assertNotIn("B000000011", [candidate["asin"] for candidate in result["candidates"]])
+        self.assertNotIn("B000000012", [candidate["asin"] for candidate in result["candidates"]])
 
     def test_lookup_reads_candidate_brands_then_refines_search(self):
         first_page = [
@@ -471,22 +556,20 @@ class MatcherTests(unittest.TestCase):
 
         search.assert_called_once()
         self.assertEqual(result["scannedCandidateCount"], 12)
-        self.assertEqual(len(result["candidates"]), 1)
-        self.assertEqual(result["candidates"][0]["amazonPackCount"], 6)
-        self.assertTrue(result["candidates"][0]["sizeMatch"])
-        self.assertTrue(result["candidates"][0]["packMatch"])
+        self.assertEqual(len(result["candidates"]), 5)
+        self.assertTrue(all(candidate["sizeMatch"] and candidate["brandMatch"] for candidate in result["candidates"]))
+        self.assertTrue(any(candidate["packMatch"] is False for candidate in result["candidates"]))
 
-    def test_lookup_excludes_size_and_pack_mismatches_then_ranks_five_closest(self):
+    def test_lookup_filters_brand_and_size_but_keeps_pack_variations(self):
         titles = [
             "Nivea Men Sensitive Shower Gel 500ml Pack of 3",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 10",
             "Nivea Men Sensitive Shower Gel Pack of 3",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Limited Edition Value Pack",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Fresh Formula",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Sensitive Skin",
+            "Radox Men Sensitive Shower Gel 250ml Pack of 3",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 10",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 4",
             "Nivea Men Sensitive Shower Gel 250ml Pack of 3",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 Daily Care",
-            "Nivea Men Sensitive Shower Gel 250ml Pack of 3 with Aloe",
+            "Nivea Men Sensitive Shower Gel 250ml Pack of 2",
+            "Nivea Men Sensitive Shower Gel 250ml",
         ]
         candidates = [
             {
@@ -506,12 +589,11 @@ class MatcherTests(unittest.TestCase):
 
         self.assertEqual(result["scannedCandidateCount"], len(titles))
         self.assertEqual(len(result["candidates"]), 5)
-        self.assertTrue(all(candidate["sizeMatch"] and candidate["packMatch"] for candidate in result["candidates"]))
+        self.assertTrue(all(candidate["brandMatch"] and candidate["sizeMatch"] for candidate in result["candidates"]))
         self.assertNotIn("500ml", " ".join(candidate["title"] for candidate in result["candidates"]))
-        self.assertNotIn("Pack of 10", " ".join(candidate["title"] for candidate in result["candidates"]))
-        scores = [candidate["titleScore"] for candidate in result["candidates"]]
-        self.assertEqual(scores, sorted(scores, reverse=True))
-        self.assertEqual(result["bestCandidate"]["asin"], "B000000007")
+        self.assertNotIn("Radox", " ".join(candidate["title"] for candidate in result["candidates"]))
+        self.assertIn("Pack of 10", " ".join(candidate["title"] for candidate in result["candidates"]))
+        self.assertTrue(any(candidate["packMatch"] is False for candidate in result["candidates"]))
 
     def test_product_page_parser_extracts_brand_from_detail_row_and_store_byline(self):
         html = '''

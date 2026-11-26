@@ -1,13 +1,13 @@
 # FinderApp recovery and change record
 
-Last updated: 2026-11-25
+Last updated: 2026-11-26
 
 This file is the project’s human-readable recovery guide and decision summary. The GitHub repository and its commits are the authoritative source for the exact code and file-by-file diffs. This is not a verbatim transcript; the original discussion remains in the v0 chat.
 
 ## Restore the code
 
 - Repository: https://github.com/fayri/finderapp
-- Restore the source from the GitHub repository or reconnect it through the v0 project’s GitHub settings. Current changes are on `v0/full-page-amazon-matches`; `main` is the default branch and should not be overwritten with unfinished work.
+- Restore the source from the GitHub repository or reconnect it through the v0 project’s GitHub settings. Current changes are on `v0/refine-brand-size-product-matching`; `main` is the default branch and should not be overwritten with unfinished work.
 - Vercel project settings hold runtime environment values. Never store credentials, API keys, supplier logins, or secret values in Git or this file.
 - Git preserves committed code and its history. This document preserves the product requirements and key decisions that help explain the code.
 
@@ -19,7 +19,7 @@ FinderApp reads supplier spreadsheets, retrieves supplier products and images, a
 - `src/components/amazon-single-item-test.tsx` — one-product search form for quick checks.
 - `src/components/amazon-match-card.tsx` — supplier reference, Amazon candidate grid, detail panels, and reviewer actions.
 - `src/lib/amazon-visual-matching.ts` and `src/app/api/amazon/visual-match/route.ts` — independent visual and title evidence, with visual evidence required for an automatic confirmation.
-- `backend/main.py` — supplier image lookup, Amazon UK result parsing, title/brand/variant/size/pack checks, seller/price extraction, and result ranking.
+- `backend/main.py` — supplier image lookup, Amazon UK result parsing, brand/variant/size checks, informational pack parsing, seller/price extraction, and result ranking.
 - `backend/product_category_terms.json` — local category terms used to broaden search queries.
 - `backend/test_matcher.py` and `src/lib/amazon-visual-matching.test.mjs` — focused matcher tests.
 - `src/app/globals.css` — responsive styles for the site and result grid.
@@ -28,17 +28,24 @@ FinderApp reads supplier spreadsheets, retrieves supplier products and images, a
 
 ## Requirements and discussion decisions
 
-- Use the supplier EAN, title, brand, variant, size, pack, and product image as separate matching evidence. An EAN or title alone must not overrule a visual conflict.
+- Filter by the known brand and exact supplied or inferred item size when those details are available. Treat pack quantity as descriptive and price context, not as a product-identity requirement. Title and image evidence stay independent; an EAN or title alone must not overrule a visual conflict.
 - Keep low-confidence results available for manual review, with listing title, seller, price, ASIN, and actions to open/read/select a listing when available.
 - Search every product listing returned on each Amazon results page actually searched; do not stop after collecting five. Evaluate all collected candidates before showing the five strongest options.
-- Rank visual matches first, then use title, size, brand, variant, pack, and EAN evidence to order/review them. A one-item Amazon listing remains eligible against a supplier multipack; show its estimated per-item price and the estimated equivalent at the supplier pack quantity.
+- Filter known brand and item size before visual checks; rank surviving options by visual evidence, title, variant, and EAN. Pack quantity does not affect eligibility, confidence, or ranking. A one-item Amazon listing remains eligible against a supplier multipack; show its estimated per-item price and the estimated equivalent at the supplier pack quantity.
 - The normalized price is calculated from the Amazon listing price and pack count parsed from its title. A pack count is assumed to be one when no multiplier is stated. The app does not currently receive a supplier buy price, so the pack-equivalent figure is a like-for-like reference, not a profit-margin or wholesale-cost calculation.
 - If an Amazon card has a title but no usable image, retain it for text/attribute review and mark its visual evidence unavailable.
 - Keep Amazon requests at least three seconds apart and stop on CAPTCHA/rate-limit responses rather than retrying aggressively.
 - No external database or new integration was selected for this workflow; do not introduce one without a new request.
 - Image reference notes: the Amazon screenshot shows NIVEA MEN Sensitive Shower Gel in 4 × 250 ml and 2 × 250 ml offers. The app screenshot shows a supplier 250 ml, pack-of-6 product and five candidates, including single-item and multipack listings; the previous five-option cap could hide better matches.
 
-## Current revision (2026-11-25)
+## Current revision (2026-11-26)
+
+- Brand and exact item size now filter the Amazon candidates; pack differences remain allowed and are shown as informational. Strong title and visual evidence are still required for confident matches.
+- The search uses a supplied or title-inferred size even when the supplier title itself lacks it. Multipacks such as 4 × 120 ml and 120 ml × 4 are normalized consistently, and manual Amazon search links include the known brand and item size without requiring the supplier pack.
+- Changed files: `PROJECT_RECOVERY.md`, `backend/main.py`, `backend/test_matcher.py`, `src/components/amazon-match-card.tsx`, `src/components/amazon-single-item-test.tsx`, `src/components/amazon-workbench.tsx`, `src/lib/amazon-search-url.ts`, `src/lib/amazon-visual-matching.ts`, and `src/lib/amazon-visual-matching.test.mjs`.
+- Validation: backend matcher unit tests, visual/query tests, TypeScript, ESLint, and the running Amazon matcher preview. Amazon live-search results were not used as a test fixture.
+
+## Previous revision (2026-11-25)
 
 - Removed the early extraction and result-count cutoffs. The matcher parses every titled Amazon result card on a searched page, including cards without image URLs, and keeps collecting fallback query pages until a page has a plausible title/brand/size result or the bounded query list is exhausted.
 - Return all unique collected candidates with a scanned count. Run visual checks in batches of five, then rank by visual verdict/score before title and product attributes; return the top five for review.

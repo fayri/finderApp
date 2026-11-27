@@ -329,7 +329,7 @@ function ImageFrame({ src, alt, label, width = 120, height = 120 }: { src: strin
   );
 }
 
-function SourceProductReference({ result }: { result: AmazonMatchRow }) {
+function SourceProductReference({ result, onToggle, isExpanded }: { result: AmazonMatchRow; onToggle: () => void; isExpanded: boolean }) {
   const sourceDetails = [
     result.brand && `Brand: ${result.brand}`,
     result.variant && `Variant: ${result.variant}`,
@@ -340,7 +340,28 @@ function SourceProductReference({ result }: { result: AmazonMatchRow }) {
   return (
     <div className="amazon-source-reference" style={{ display: "flex", gap: "20px", padding: "16px", backgroundColor: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
       <div className="amazon-source-reference-image" style={{ flexShrink: 0 }}>
-        <p className="amazon-compare-label" style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>SUPPLIER PRODUCT</p>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", cursor: "pointer" }}>
+          <p className="amazon-compare-label" style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px", margin: 0 }}>SUPPLIER PRODUCT</p>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? "Collapse supplier details" : "Expand supplier details"}
+            style={{ padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: "4px", backgroundColor: "#fff", fontSize: "11px", color: "#64748b", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+          >
+            {isExpanded ? (
+              <>
+                <ChevronUp size={12} aria-hidden="true" />
+                Collapse
+              </>
+            ) : (
+              <>
+                <ChevronDown size={12} aria-hidden="true" />
+                Expand
+              </>
+            )}
+          </button>
+        </div>
         <ImageFrame
           src={result.regalImageUrl}
           alt={`Supplier product image for ${result.title || result.ean}`}
@@ -353,16 +374,20 @@ function SourceProductReference({ result }: { result: AmazonMatchRow }) {
         <p className="amazon-compare-label" style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>TITLE + ITEM SIZE TO MATCH</p>
         <h4 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 600, color: "#1e293b" }}>{titleWithSize(result.title || "No supplier title provided", result.size)}</h4>
 
-        {sourceDetails.length ? <p className="amazon-compare-detail" style={{ color: "#475569", fontSize: "13px", margin: "0 0 8px 0" }}>{sourceDetails.join(" · ")}</p> : null}
-        {result.brandSource === "amazon" && result.brand ? (
-          <p className="amazon-label-text" style={{ color: "#059669", fontSize: "13px", margin: "0 0 8px 0" }}><strong>Brand found:</strong> {result.brand} from Amazon product details</p>
-        ) : null}
-        {result.imageTerms ? <p className="amazon-label-text" style={{ color: "#0369a1", fontSize: "13px", margin: "0" }}><strong>Label read:</strong> {result.imageTerms}</p> : null}
-        {!result.regalImageUrl ? (
-          <p className="amazon-source-image-warning" role="status" style={{ color: "#dc2626", fontSize: "13px", margin: "8px 0 0 0" }}>
-            Image matching is required, but no supplier image was available for this row.
-          </p>
-        ) : null}
+        {isExpanded && (
+          <>
+            {sourceDetails.length ? <p className="amazon-compare-detail" style={{ color: "#475569", fontSize: "13px", margin: "0 0 8px 0" }}>{sourceDetails.join(" · ")}</p> : null}
+            {result.brandSource === "amazon" && result.brand ? (
+              <p className="amazon-label-text" style={{ color: "#059669", fontSize: "13px", margin: "0 0 8px 0" }}><strong>Brand found:</strong> {result.brand} from Amazon product details</p>
+            ) : null}
+            {result.imageTerms ? <p className="amazon-label-text" style={{ color: "#0369a1", fontSize: "13px", margin: "0" }}><strong>Label read:</strong> {result.imageTerms}</p> : null}
+            {!result.regalImageUrl ? (
+              <p className="amazon-source-image-warning" role="status" style={{ color: "#dc2626", fontSize: "13px", margin: "8px 0 0 0" }}>
+                Image matching is required, but no supplier image was available for this row.
+              </p>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );
@@ -809,6 +834,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
   const [progress, setProgress] = useState<AmazonProgress>(initialProgress);
   const [retryingVisualRow, setRetryingVisualRow] = useState<number | null>(null);
   const [expandedCandidates, setExpandedCandidates] = useState<Set<string>>(new Set());
+  const [expandedSupplierCards, setExpandedSupplierCards] = useState<Set<string>>(new Set());
 
   async function handleFile(file: File) {
     setErrorMessage("");
@@ -1289,15 +1315,32 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                     ? [result.bestCandidate]
                     : [];
 
+                // Filter candidates: only show if brand matches (if supplier has brand) AND size matches (if supplier has size)
+                const filteredCandidates = candidateOptions.filter((option) => {
+                  const brandMatch = !result.brand || option.brandMatch === true;
+                  const sizeMatch = !result.size || option.sizeMatch === true;
+                  return brandMatch && sizeMatch;
+                });
+
                 const selectedCandidateKey = result.selectedCandidateKey || (result.bestCandidate ? (result.bestCandidate.asin || result.bestCandidate.productUrl || result.bestCandidate.title) : "");
                 const selectedCandidate = candidateOptions.find(c => (c.asin || c.productUrl || c.title) === selectedCandidateKey);
                 const sourceTitle = titleWithSize([result.brand, result.title, result.variant].filter(Boolean).join(" "), result.size);
+                const isSupplierExpanded = expandedSupplierCards.has(result.key);
+
+                const toggleSupplierCard = () => {
+                  setExpandedSupplierCards(prev => {
+                    const next = new Set(prev);
+                    if (next.has(result.key)) next.delete(result.key);
+                    else next.add(result.key);
+                    return next;
+                  });
+                };
 
                 return (
                   <div key={`${result.key}-${resultIndex}`} className="amazon-result-group" style={{ marginBottom: "24px", border: "1px solid #e2e8f0", borderRadius: "12px", overflow: "hidden", backgroundColor: "#fff" }}>
-                    <SourceProductReference result={result} />
+                    <SourceProductReference result={result} onToggle={toggleSupplierCard} isExpanded={isSupplierExpanded} />
 
-                    {candidateOptions.length ? (
+                    {filteredCandidates.length ? (
                       <div className="amazon-candidate-table-container" style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                           <thead>
@@ -1309,7 +1352,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {candidateOptions.map((option, index) => {
+                            {filteredCandidates.map((option, index) => {
                               const candidateKey = option.asin || option.productUrl || option.title;
                               const isSelected = Boolean(
                                 selectedCandidate && selectedCandidate.asin === option.asin && selectedCandidate.productUrl === option.productUrl && selectedCandidate.title === option.title,
@@ -1348,7 +1391,9 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                       </div>
                     ) : (
                       <div style={{ padding: "16px", color: "#64748b", fontStyle: "italic" }}>
-                        {result.message || "No Amazon matches found."}
+                        {candidateOptions.length
+                          ? "No matches found with matching brand and size."
+                          : result.message || "No Amazon matches found."}
                         <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer" style={{ marginLeft: "12px", fontSize: "12px", color: "#3b82f6" }}>
                           Search Amazon UK <ExternalLink size={12} aria-hidden="true" />
                         </a>

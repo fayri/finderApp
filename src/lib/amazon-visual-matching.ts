@@ -16,7 +16,7 @@ interface VisualEvaluation {
   reason: string;
 }
 
-const MAX_VISUAL_CANDIDATES_PER_REQUEST = 10;
+const MAX_VISUAL_CANDIDATES_PER_REQUEST = 20;
 
 const TITLE_STOP_WORDS = new Set([
   "a",

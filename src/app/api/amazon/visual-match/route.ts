@@ -6,7 +6,7 @@ export const maxDuration = 30;
 
 const MAX_REQUEST_BYTES = 24 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_CANDIDATES = 5;
+const MAX_CANDIDATES = 20;
 const MAX_URL_LENGTH = 2048;
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/avif",

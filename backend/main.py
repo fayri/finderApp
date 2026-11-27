@@ -371,6 +371,18 @@ def format_price(value: Decimal, currency: str) -> str:
     return f"{symbol}{rounded:.2f}"
 
 
+def format_price_gbp(price_str: str) -> str:
+    """Format price string to ensure GBP currency symbol (£) is used for UK marketplace."""
+    if not price_str:
+        return ""
+    # Replace any $ with £ for Amazon UK
+    formatted = price_str.replace("$", "£")
+    # Also handle cases where price might have "USD" or "GBP" text
+    formatted = re.sub(r"\bUSD\b", "GBP", formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r"\b\$\b", "£", formatted)
+    return formatted
+
+
 def candidate_price_details(price: str, title: str, source_pack: str, source_size: str) -> dict[str, Any]:
     outer_count, inner_count, listing_quantity = extract_amazon_pack_components(title)
     details: dict[str, Any] = {
@@ -388,6 +400,9 @@ def candidate_price_details(price: str, title: str, source_pack: str, source_siz
         return details
 
     currency = price_match.group("currency")
+    # Force GBP for Amazon UK marketplace
+    if currency.upper() in {"USD", "$"}:
+        currency = "GBP"
     amount_text = price_match.group("amount").replace(",", "")
     try:
         listing_price = Decimal(amount_text)
@@ -751,6 +766,8 @@ def extract_amazon_product_details(html: str) -> dict[str, str]:
         price_tag = soup.select_one(selector)
         if price_tag:
             price = normalize_text(price_tag.get_text(" ", strip=True))
+            # Ensure price uses GBP (£) for UK marketplace
+            price = format_price_gbp(price)
             if price:
                 break
 
@@ -784,6 +801,8 @@ def extract_amazon_candidates(html: str, ean: str) -> list[dict[str, Any]]:
         price_tag = product.select_one(".a-price .a-offscreen")
         if price_tag:
             price = normalize_text(price_tag.get_text(" ", strip=True))
+            # Ensure price uses GBP (£) for UK marketplace
+            price = format_price_gbp(price)
         card_text = normalize_text(product.get_text(" ", strip=True))[:3000]
         candidates.append(
             {
@@ -915,6 +934,10 @@ def get_amazon_offer(request: AmazonOfferRequest):
             "seller": "",
             "price": "",
         }
+
+    # Ensure price is formatted with GBP (£)
+    if details["price"]:
+        details["price"] = format_price_gbp(details["price"])
 
     missing_fields = [
         label

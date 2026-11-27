@@ -595,164 +595,58 @@ export function AmazonMatchCard({
   };
 
   return (
-    <article className={`amazon-result-card amazon-result-${result.status}`} aria-labelledby={headingId} style={{ border: "1px solid #e2e8f0", borderRadius: "12px", backgroundColor: "white", overflow: "hidden" }}>
-      <div className="amazon-result-topline" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #e2e8f0", backgroundColor: "#fafafa" }}>
-        <div>
-          <p className="amazon-row-number" style={{ margin: "0 0 6px 0", fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>{rowLabel}</p>
-          <h3 id={headingId} style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 600, color: "#1e293b" }}>{titleWithSize(result.title || result.brand || result.ean || "Untitled product", result.size)}</h3>
-          <p className="amazon-result-meta" style={{ margin: 0, display: "flex", flexWrap: "wrap", gap: "16px", fontSize: "13px", color: "#475569" }}>
-            {result.ean ? <span><strong>EAN:</strong> <code style={{ backgroundColor: "#f1f5f9", padding: "2px 6px", borderRadius: "4px", fontSize: "12px" }}>{result.ean}</code></span> : <span style={{ color: "#94a3b8" }}>No EAN supplied</span>}
-            {result.size ? <span><strong>Size:</strong> {result.size}</span> : null}
-            {result.pack ? <span><strong>Pack:</strong> {result.pack}</span> : null}
-          </p>
-        </div>
+    <div className={`amazon-result-row amazon-result-${result.status}`}>
+      <div className="amazon-result-topline" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px" }}>
         <span className={`amazon-status amazon-status-${result.status}`} style={{
           display: "inline-flex",
           alignItems: "center",
           gap: "6px",
-          padding: "6px 12px",
-          borderRadius: "20px",
-          fontSize: "12px",
+          padding: "4px 8px",
+          borderRadius: "12px",
+          fontSize: "11px",
           fontWeight: 600,
           textTransform: "uppercase",
-          letterSpacing: "0.3px",
-          backgroundColor: result.status === "high" ? "#dcfce7" : result.status === "medium" ? "#fef3c7" : result.status === "low" ? "#fef3c7" : result.status === "not-found" ? "#f1f5f9" : result.status === "blocked" || result.status === "error" ? "#fee2e2" : "#f1f5f9",
-          color: result.status === "high" ? "#166534" : result.status === "medium" ? "#92400e" : result.status === "low" ? "#92400e" : result.status === "not-found" ? "#64748b" : result.status === "blocked" || result.status === "error" ? "#991b1b" : "#64748b",
-          border: result.status === "high" ? "1px solid #86efac" : result.status === "medium" ? "1px solid #fde68a" : result.status === "low" ? "1px solid #fde68a" : result.status === "not-found" ? "1px solid #cbd5e1" : result.status === "blocked" || result.status === "error" ? "1px solid #fecaca" : "1px solid #cbd5e1",
+          backgroundColor: result.status === "high" ? "#dcfce7" : result.status === "medium" ? "#fef3c7" : "#f1f5f9",
+          color: result.status === "high" ? "#166534" : result.status === "medium" ? "#92400e" : "#64748b",
         }}>
-          {result.status === "high" && <BadgeCheck size={13} aria-hidden="true" />}
-          {result.status === "blocked" || result.status === "error" ? <ShieldAlert size={13} aria-hidden="true" /> : null}
           {statusLabels[result.status as keyof typeof statusLabels]}
         </span>
-      </div>
-
-      <div className="amazon-result-links" style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 20px", borderBottom: "1px solid #e2e8f0", backgroundColor: "#fafafa" }}>
-        {needsVisualRetry ? (
-          <RetryVisualButton
-            onClick={() => onRetryVisual(result.rowNumber)}
-            isRetrying={isVisualRetrying}
-            busy={isVisualRetryBusy}
-          />
-        ) : null}
-        <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer" style={{ padding: "8px 12px", fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", color: "#3b82f6", fontWeight: 500 }}>
-          Search Amazon UK in browser <ExternalLink size={13} aria-hidden="true" />
+        <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer" style={{ fontSize: "12px", color: "#3b82f6" }}>
+          Search <ExternalLink size={12} aria-hidden="true" />
         </a>
       </div>
 
-      {result.status === "pending" ? (
-        <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b" }}>
-          <LoaderCircle size={24} aria-hidden="true" style={{ marginBottom: "12px", color: "#3b82f6" }} />
-          <p className="amazon-result-message" style={{ margin: 0, fontSize: "14px" }}>Waiting for its turn in the search queue.</p>
-        </div>
-      ) : result.status === "not-found" ? (
-        <div className="amazon-no-match" style={{ padding: "40px 20px", textAlign: "center" }}>
-          <SearchX size={32} aria-hidden="true" style={{ color: "#cbd5e1", marginBottom: "12px" }} />
-          <div>
-            <strong style={{ fontSize: "16px", color: "#1e293b", display: "block", marginBottom: "8px" }}>No Amazon listings found</strong>
-            <p style={{ margin: 0, color: "#64748b" }}>{result.message}</p>
-          </div>
-        </div>
-      ) : result.status === "blocked" || result.status === "error" ? (
-        <div style={{ padding: "20px", color: "#991b1b", backgroundColor: "#fef2f2", borderRadius: "8px", margin: "16px" }}>
-          <p className="amazon-result-message" role={result.status === "blocked" ? "status" : "alert"} style={{ margin: 0 }}>{result.message}</p>
-        </div>
-      ) : candidateOptions.length ? (
-        <>
-          <SourceProductReference result={result} />
-
-          <section className="amazon-candidate-section" aria-label="Amazon listing matches" style={{ padding: "0 20px 20px 20px" }}>
-            <div className="amazon-candidate-heading" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-              <div>
-                <h4 style={{ margin: "0 0 6px 0", fontSize: "16px", fontWeight: 600, color: "#1e293b" }}>
-                  {candidateOptions.length === 1 ? "Amazon Match Found" : `Amazon Matches Found (${candidateOptions.length})`}
-                </h4>
-                <p style={{ margin: 0, fontSize: "13px", color: "#64748b", maxWidth: "600px" }}>
-                  {result.bestCandidate
-                    ? `Scanned ${result.scannedCandidateCount ?? candidateOptions.length} listings. The known brand and supplied item size guide filtering; pack count may differ. Title and image evidence determine match confidence.`
-                    : result.message || "Review the Amazon listings below."}
-                </p>
-              </div>
-              <span style={{ fontSize: "12px", color: "#64748b", backgroundColor: "#f1f5f9", padding: "4px 10px", borderRadius: "6px", whiteSpace: "nowrap" }}>
-                Showing all {candidateOptions.length} of {result.scannedCandidateCount ?? candidateOptions.length} scanned
-              </span>
-            </div>
-
-            <div className="amazon-candidate-table-container" style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-                <thead>
-                  <tr style={{ backgroundColor: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
-                    <th scope="col" style={{ width: "48px", padding: "12px 8px", textAlign: "center", fontWeight: 600, color: "#64748b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                        <Square size={16} aria-hidden="true" style={{ color: "#cbd5e1" }} />
-                      </span>
-                    </th>
-                    <th scope="col" style={{ width: "130px", padding: "12px 8px", textAlign: "left", fontWeight: 600, color: "#64748b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Image</th>
-                    <th scope="col" style={{ padding: "12px 16px", textAlign: "left", fontWeight: 600, color: "#64748b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Product Details</th>
-                    <th scope="col" style={{ width: "140px", padding: "12px 16px", textAlign: "left", fontWeight: 600, color: "#64748b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Match Scores</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {candidateOptions.map((option, index) => (
-                    <CandidateRow
-                      key={option.asin || option.productUrl || option.title}
-                      candidate={option}
-                      index={index}
-                      isSelected={Boolean(selectedCandidate && selectedCandidate.asin === option.asin && selectedCandidate.productUrl === option.productUrl && selectedCandidate.title === option.title)}
-                      onSelect={() => handleCandidateSelect(option)}
-                      onDetails={(updated) => handleCandidateDetails(updated)}
-                      sourceTitle={sourceTitle}
-                      fallbackSearchUrl={amazonSearchUrl(result)}
-                      result={result}
-                      onToggleExpand={() => toggleExpand(option)}
-                      isExpanded={expandedRows.has(option.asin || option.productUrl || option.title)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {selectedCandidate && (
-              <div className="amazon-result-bottomline" style={{ marginTop: "20px", padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-                <p className="amazon-match-reason" style={{ margin: "0 0 16px 0", fontSize: "14px", color: "#334155", lineHeight: 1.5 }}>{selectedCandidate.reason}</p>
-                {isReview ? (
-                  <div className="amazon-review-actions" aria-label="Review match" style={{ display: "flex", gap: "10px" }}>
-                    <button
-                      type="button"
-                      className={`secondary-button amazon-review-button${result.decision === "confirmed" ? " is-selected" : ""}`}
-                      onClick={() => onDecision(result.rowNumber, "confirmed")}
-                      aria-pressed={result.decision === "confirmed"}
-                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 16px", fontSize: "13px", fontWeight: 500 }}
-                    >
-                      <Check size={14} aria-hidden="true" /> Confirm Match
-                    </button>
-                    <button
-                      type="button"
-                      className={`secondary-button amazon-review-button${result.decision === "rejected" ? " is-rejected" : ""}`}
-                      onClick={() => onDecision(result.rowNumber, "rejected")}
-                      aria-pressed={result.decision === "rejected"}
-                      style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "10px 16px", fontSize: "13px", fontWeight: 500 }}
-                    >
-                      <X size={14} aria-hidden="true" /> Reject Match
-                    </button>
-                  </div>
-                ) : (
-                  <span className="amazon-auto-note" style={{ fontSize: "13px", color: "#64748b" }}>{result.status === "high" ? "EAN evidence found" : "No manual review needed"}</span>
-                )}
-              </div>
-            )}
-          </section>
-        </>
-      ) : (
-        <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b" }}>
-          <p className="amazon-result-message" style={{ margin: 0, fontSize: "14px" }}>{result.message || "The result is ready for review."}</p>
-        </div>
-      )}
-
-      {isReview && result.decision ? (
-        <div className={`amazon-decision-note${result.decision === "rejected" ? " is-rejected" : ""}`} role="status" style={{ padding: "12px 20px", backgroundColor: result.decision === "confirmed" ? "#dcfce7" : "#fee2e2", borderTop: "1px solid #e2e8f0", color: result.decision === "confirmed" ? "#166534" : "#991b1b", fontSize: "13px", fontWeight: 500 }}>
-          {result.decision === "confirmed" ? "✓ Confirmed by reviewer." : "✗ Rejected by reviewer."}
+      {candidateOptions.length ? (
+        <div className="amazon-candidate-table-container" style={{ overflowX: "auto", marginTop: "8px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+            <thead>
+              <tr style={{ backgroundColor: "#f8fafc" }}>
+                <th style={{ padding: "8px", textAlign: "left" }}>Select</th>
+                <th style={{ padding: "8px", textAlign: "left" }}>Image</th>
+                <th style={{ padding: "8px", textAlign: "left" }}>Product</th>
+                <th style={{ padding: "8px", textAlign: "left" }}>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {candidateOptions.map((option, index) => (
+                <CandidateRow
+                  key={option.asin || option.productUrl || option.title}
+                  candidate={option}
+                  index={index}
+                  isSelected={Boolean(selectedCandidate && selectedCandidate.asin === option.asin && selectedCandidate.productUrl === option.productUrl && selectedCandidate.title === option.title)}
+                  onSelect={() => handleCandidateSelect(option)}
+                  onDetails={(updated) => handleCandidateDetails(updated)}
+                  sourceTitle={sourceTitle}
+                  fallbackSearchUrl={amazonSearchUrl(result)}
+                  result={result}
+                  onToggleExpand={() => toggleExpand(option)}
+                  isExpanded={expandedRows.has(option.asin || option.productUrl || option.title)}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : null}
-    </article>
+    </div>
   );
 }

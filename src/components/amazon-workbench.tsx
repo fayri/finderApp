@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import Papa from "papaparse";
-import { AmazonMatchCard } from "@/components/amazon-match-card";
+
 import { AmazonSingleItemTest } from "@/components/amazon-single-item-test";
 import type {
   AmazonMatchResponse,
@@ -765,20 +765,170 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
               <div className="amazon-summary-card summary-missing"><strong>{notFoundCount}</strong><span>Not found</span></div>
               <span className="result-count">{results.length} source {results.length === 1 ? "row" : "rows"}</span>
             </div>
-            <div className="amazon-results-list">
-              {results.map((result) => (
-                <AmazonMatchCard
-                  key={`${result.rowNumber}-${result.key}`}
-                  result={result}
-                  onDecision={updateDecision}
-                  onCandidateSelect={updateCandidate}
-                  onCandidateDetails={updateCandidateDetails}
-                  onRetryVisual={retryVisualMatch}
-                  isVisualRetrying={retryingVisualRow === result.rowNumber}
-                  isVisualRetryBusy={retryingVisualRow !== null}
-                />
-              ))}
-            </div>
+            <div className="amazon-results-list" style={{ width: "100%", overflowX: "auto", marginTop: "20px" }}>
+  <table
+    aria-label="Amazon match results"
+    style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}
+  >
+    <thead>
+      <tr style={{ borderBottom: "2px solid #e2e8f0", backgroundColor: "#f8fafc" }}>
+        <th style={{ padding: "10px", textAlign: "left" }}>Row</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>Source product</th>
+        <th style={{ padding: "10px", textAlign: "center" }}>Image</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>Amazon title</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>ASIN</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>Seller</th>
+        <th style={{ padding: "10px", textAlign: "right" }}>Price</th>
+        <th style={{ padding: "10px", textAlign: "right" }}>Title match</th>
+        <th style={{ padding: "10px", textAlign: "right" }}>Image match</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>Status</th>
+        <th style={{ padding: "10px", textAlign: "left" }}>Notes</th>
+        <th style={{ padding: "10px", textAlign: "center" }}>Select</th>
+      </tr>
+    </thead>
+    <tbody>
+      {results.flatMap((result) => {
+        const candidateOptions = result.candidates.length
+          ? result.candidates
+          : result.bestCandidate
+            ? [result.bestCandidate]
+            : [];
+
+        if (!candidateOptions.length) {
+          return [
+            <tr
+              key={`${result.rowNumber}-${result.key}-empty`}
+              style={{ borderBottom: "1px solid #e2e8f0" }}
+            >
+              <td style={{ padding: "10px" }}>{result.rowNumber}</td>
+              <td style={{ padding: "10px" }}>{result.title || "—"}</td>
+              <td
+                colSpan={10}
+                style={{ padding: "10px", color: "#64748b", fontStyle: "italic" }}
+              >
+                {result.message || "No Amazon matches found."}
+              </td>
+            </tr>,
+          ];
+        }
+
+        return candidateOptions.map((option, index) => {
+          const candidateKey = option.asin || option.productUrl || option.title;
+          const isSelected = Boolean(
+            result.selectedCandidateKey && candidateKey === result.selectedCandidateKey,
+          );
+          const imageUrl = (option as AmazonSearchCandidate & { imageUrl?: string }).imageUrl ?? "";
+
+          return (
+            <tr
+              key={`${result.rowNumber}-${candidateKey}-${index}`}
+              style={{
+                borderBottom: "1px solid #e2e8f0",
+                backgroundColor: isSelected ? "#fef9c3" : undefined,
+              }}
+            >
+              <td style={{ padding: "10px" }}>{result.rowNumber}</td>
+              <td style={{ padding: "10px", maxWidth: 220 }}>
+                {result.title || "—"}
+              </td>
+              <td style={{ padding: "10px", textAlign: "center" }}>
+                {imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    width={48}
+                    height={48}
+                    style={{
+                      objectFit: "contain",
+                      borderRadius: 4,
+                      background: "#fff",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  />
+                ) : (
+                  <span style={{ color: "#94a3b8" }}>—</span>
+                )}
+              </td>
+              <td style={{ padding: "10px", maxWidth: 280 }}>
+                {option.productUrl ? (
+                  <a
+                    href={option.productUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#2563eb", textDecoration: "underline" }}
+                  >
+                    {option.amazonTitle || option.title || "—"}
+                  </a>
+                ) : (
+                  option.amazonTitle || option.title || "—"
+                )}
+              </td>
+              <td style={{ padding: "10px", fontFamily: "ui-monospace, monospace" }}>
+                {option.asin || "—"}
+              </td>
+              <td style={{ padding: "10px" }}>{option.seller || "—"}</td>
+              <td style={{ padding: "10px", textAlign: "right" }}>{option.price || "—"}</td>
+              <td style={{ padding: "10px", textAlign: "right" }}>
+                {typeof option.titleWordCoverage === "number"
+                  ? `${Math.round(option.titleWordCoverage * 100)}%`
+                  : "—"}
+              </td>
+              <td style={{ padding: "10px", textAlign: "right" }}>
+                {typeof option.imageMatchScore === "number"
+                  ? `${Math.round(option.imageMatchScore)}%`
+                  : "—"}
+              </td>
+              <td style={{ padding: "10px" }}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    backgroundColor:
+                      option.tier === "high"
+                        ? "#dcfce7"
+                        : option.tier === "medium"
+                          ? "#fef3c7"
+                          : option.tier === "low"
+                            ? "#fee2e2"
+                            : "#e2e8f0",
+                    color:
+                      option.tier === "high"
+                        ? "#166534"
+                        : option.tier === "medium"
+                          ? "#92400e"
+                          : option.tier === "low"
+                            ? "#991b1b"
+                            : "#334155",
+                  }}
+                >
+                  {option.tier || result.status}
+                </span>
+              </td>
+              <td style={{ padding: "10px", maxWidth: 240, color: "#475569" }}>
+                {option.reason || option.visualVerdict || "—"}
+              </td>
+              <td style={{ padding: "10px", textAlign: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => updateCandidate(result.rowNumber, option)}
+                  disabled={isSelected}
+                  style={{ cursor: isSelected ? "default" : "pointer" }}
+                  aria-label={isSelected ? "Selected match" : "Select this match"}
+                >
+                  {isSelected ? "✓ Selected" : "Select"}
+                </button>
+              </td>
+            </tr>
+          );
+        });
+      })}
+    </tbody>
+  </table>
+</div>
             <p className="results-disclaimer amazon-disclaimer">
               Title match measures source-title word coverage; image match is an independent AI visual estimate, not a probability. Load each Amazon listing&apos;s full title, seller, and current page price for manual review before confirming. Amazon prices can change. High matches require an exact EAN in the Amazon result text.
             </p>

@@ -16,8 +16,7 @@ interface VisualEvaluation {
   reason: string;
 }
 
-const MAX_VISUAL_CANDIDATES_PER_REQUEST = 5;
-const MAX_VISIBLE_CANDIDATES = 5;
+const MAX_VISUAL_CANDIDATES_PER_REQUEST = 10;
 
 const TITLE_STOP_WORDS = new Set([
   "a",
@@ -354,14 +353,14 @@ export async function verifyAmazonCandidates(
     };
   }
 
-  const topCandidates = verified.slice(0, MAX_VISIBLE_CANDIDATES);
-  const bestCandidate = topCandidates.find((candidate) => candidate.tier === "high" || candidate.tier === "medium") ?? null;
+  // Return ALL sorted candidates
+  const bestCandidate = verified.find((candidate) => candidate.tier === "high" || candidate.tier === "medium") ?? null;
   return {
     ...response,
     status: bestCandidate?.tier ?? "low",
     message: bestCandidate?.reason ?? `No listing passed both the ${Math.round(TITLE_WORD_MATCH_THRESHOLD * 100)}% title-match requirement and a strong visual match (at least ${MIN_VISUAL_MATCH_SCORE}%). Nothing was selected automatically; review the options below.`,
     bestCandidate,
-    candidates: topCandidates,
+    candidates: verified,
     scannedCandidateCount: response.scannedCandidateCount ?? candidates.length,
   };
 }

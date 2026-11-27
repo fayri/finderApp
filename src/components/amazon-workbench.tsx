@@ -1293,13 +1293,6 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                     ? [result.bestCandidate]
                     : [];
 
-                // Filter candidates: only show if brand matches (if supplier has brand) AND size matches (if supplier has size)
-                const filteredCandidates = candidateOptions.filter((option) => {
-                  const brandMatch = !result.brand || option.brandMatch !== false;
-                  const sizeMatch = !result.size || option.sizeMatch !== false;
-                  return brandMatch && sizeMatch;
-                });
-
                 const selectedCandidateKey = result.selectedCandidateKey || (result.bestCandidate ? (result.bestCandidate.asin || result.bestCandidate.productUrl || result.bestCandidate.title) : "");
                 const selectedCandidate = candidateOptions.find(c => (c.asin || c.productUrl || c.title) === selectedCandidateKey);
                 const sourceTitle = titleWithSize([result.brand, result.title, result.variant].filter(Boolean).join(" "), result.size);
@@ -1314,9 +1307,13 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                   });
                 };
 
-                // No client-side brand/size filtering — the backend ranking already prioritizes matches,
-                // and attribute checks visually flag any brand/size/pack mismatch per candidate.
-                const visibleCandidates = candidateOptions;
+                // Required brand and size matching — filter out candidates where the supplier has
+                // brand/size specified and the Amazon candidate definitively mismatches.
+                const filteredCandidates = candidateOptions.filter((option) => {
+                  const brandMatch = !result.brand || option.brandMatch !== false;
+                  const sizeMatch = !result.size || option.sizeMatch !== false;
+                  return brandMatch && sizeMatch;
+                });
 
                 return (
                   <div key={`${result.key}-${resultIndex}`} className="amazon-result-group" style={{ marginBottom: "24px", border: "1px solid #e2e8f0", borderRadius: "12px", overflow: "hidden", backgroundColor: "#fff" }}>
@@ -1338,10 +1335,10 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                           </>
                         )}
                       </button>
-                      <span style={{ fontSize: "11px", fontWeight: 600, color: "#64748b" }}>{visibleCandidates.length} Amazon candidate{visibleCandidates.length !== 1 ? "s" : ""}</span>
+                      <span style={{ fontSize: "11px", fontWeight: 600, color: "#64748b" }}>{filteredCandidates.length} Amazon candidate{filteredCandidates.length !== 1 ? "s" : ""}</span>
                     </div>
 
-                    {candidateRowExpanded && visibleCandidates.length ? (
+                    {candidateRowExpanded && filteredCandidates.length ? (
                       <div className="amazon-candidate-table-container" style={{ overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
                           <thead>
@@ -1353,7 +1350,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {visibleCandidates.map((option, index) => {
+                            {filteredCandidates.map((option, index) => {
                               const candidateKey = option.asin || option.productUrl || option.title;
                               const isSelected = Boolean(
                                 selectedCandidate && selectedCandidate.asin === option.asin && selectedCandidate.productUrl === option.productUrl && selectedCandidate.title === option.title,
@@ -1390,7 +1387,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                           </tbody>
                         </table>
                       </div>
-                    ) : candidateRowExpanded && visibleCandidates.length === 0 && candidateOptions.length > 0 ? (
+                    ) : candidateRowExpanded && filteredCandidates.length === 0 && candidateOptions.length > 0 ? (
                       <div style={{ padding: "16px", color: "#64748b", fontStyle: "italic" }}>
                         No Amazon candidates returned.
                         <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer" style={{ marginLeft: "12px", fontSize: "12px", color: "#3b82f6" }}>
@@ -1399,7 +1396,7 @@ export function AmazonWorkbench({ buildVersion }: { buildVersion: string }) {
                       </div>
                     ) : null}
 
-                    {!candidateRowExpanded && visibleCandidates.length === 0 && candidateOptions.length > 0 ? (
+                    {!candidateRowExpanded && filteredCandidates.length === 0 && candidateOptions.length > 0 ? (
                       <div style={{ padding: "0 16px 12px 16px", color: "#64748b", fontStyle: "italic", fontSize: "12px" }}>
                         No Amazon candidates returned.
                         <a className="amazon-product-link" href={amazonSearchUrl(result)} target="_blank" rel="noreferrer" style={{ marginLeft: "12px", fontSize: "12px", color: "#3b82f6" }}>

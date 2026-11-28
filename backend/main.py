@@ -26,7 +26,7 @@ MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_SEARCH_QUERIES = 10
 MAX_BRAND_DETAIL_LOOKUPS = 5
 # MAX_MATCH_CANDIDATES removed - return all findings
-TITLE_QUERY_STAGES = {"brand-size", "brand-size-variant", "brand-title-size", "brand-title-size-variant", "brand-title", "brand-title-variant", "size-title", "size-title-variant", "title-only", "title-variant", "image", "image-brand-size"}
+TITLE_QUERY_STAGES = {"brand-size", "brand-variant", "brand-title-size", "brand-title-size-variant", "brand-title", "brand-title-variant", "size-title", "size-title-variant", "title-only", "title-variant", "title-original", "image", "image-brand-size"}
 TITLE_CONNECTOR_WORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
@@ -154,7 +154,11 @@ def compound_pack_counts(value: str) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
-def extract_amazon_pack_components(title: str) -> tuple[int, int | None, int]:
+def extract_amazon_pack_components(title: str, context_size: str = "") -> tuple[int, int | None, int]:
+    """
+    Extract pack components from Amazon title.
+    Optionally uses context_size to infer units for implicit patterns like "4 x 120".
+    """
     volume_multiplier = re.search(
         r"(?<!\w)(\d{1,3})\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:fl\s?oz|ml|cl|litres?|liters?|l|kg|mg|gm|g)\b",
         title,
@@ -173,6 +177,54 @@ def extract_amazon_pack_components(title: str) -> tuple[int, int | None, int]:
         quantity = max(1, int(reversed_volume_multiplier.group(1)))
         return quantity, None, quantity
 
+    # Handle implicit unit patterns like "4 x 120" (no unit) when context_size provides unit
+    if context_size:
+        # Infer the unit from context_size (use internal to avoid recursion)
+        ctx_measurements = _measurements_internal(context_size)
+        inferred_unit = None
+        context_unit_value = None
+        for m in ctx_measurements:
+            if m.endswith("ml") or m.endswith("g") or m.endswith("mm"):
+                inferred_unit = "ml" if m.endswith("ml") else ("g" if m.endswith("g") else "mm")
+                # Extract the numeric value from context (e.g., "120ml" -> 120)
+                match = re.match(r"(\d+(?:\.\d+)?)(?:ml|g|mm)$", m)
+                if match:
+                    context_unit_value = Decimal(match.group(1))
+                break
+
+        if inferred_unit and context_unit_value is not None:
+            # Pattern: "4 x 120" (pack count x unit size, without unit, context confirms unit size)
+            implicit_volume_multiplier = re.search(
+                rf"(?<!\w)(\d{{1,3}})\s*[x×]\s*(\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+                title,
+                re.IGNORECASE,
+            )
+            if implicit_volume_multiplier:
+                pack_count = max(1, int(implicit_volume_multiplier.group(1)))
+                unit_size = Decimal(implicit_volume_multiplier.group(2).replace(",", "."))
+                # Verify the unit size matches context (allowing small tolerance)
+                if abs(unit_size - context_unit_value) < Decimal("0.01"):
+                    return pack_count, None, pack_count
+
+            # Pattern: "120 x 4" (unit size x pack count, reversed, without unit)
+            # Use context to disambiguate: the number matching context_unit_value is the unit size
+            implicit_reversed = re.search(
+                rf"(?<!\w)(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d{{1,3}})\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+                title,
+                re.IGNORECASE,
+            )
+            if implicit_reversed:
+                first_num = Decimal(implicit_reversed.group(1).replace(",", "."))
+                second_num = max(1, int(implicit_reversed.group(2)))
+                # If first number matches context unit size, second is pack count
+                if abs(first_num - context_unit_value) < Decimal("0.01"):
+                    return second_num, None, second_num
+                # If second number matches context unit size (and is reasonable as unit size), first is pack count
+                # But second is limited to 1-3 digits, so unlikely to be unit size > 999
+                # Just check if first is a reasonable pack count (1-100)
+                elif first_num <= 100 and second_num == int(context_unit_value):
+                    return max(1, int(first_num)), None, max(1, int(first_num))
+
     compound = compound_pack_counts(title)
     if compound:
         outer_count, inner_count = compound
@@ -190,9 +242,10 @@ def extract_amazon_pack_components(title: str) -> tuple[int, int | None, int]:
     return 1, None, 1
 
 
-def measurements(value: str) -> set[str]:
+def _measurements_internal(value: str) -> set[str]:
+    """Internal measurements extraction without context inference (to avoid recursion)."""
     pattern = re.compile(
-        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?)(?:\s*[x×]\s*\d{1,3})?\b",
+        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?|sheets?|rolls?|bags?|boxes?|tubes?|bars?|packets?|sachets?|pads?|strips?)(?:\s*[x×]\s*\d{1,3})?\b",
         re.IGNORECASE,
     )
     result: set[str] = set()
@@ -219,7 +272,7 @@ def measurements(value: str) -> set[str]:
         elif unit in {"cm", "centimetre", "centimetres", "centimeter", "centimeters"}:
             number *= 10
             unit = "mm"
-        elif unit in {"piece", "pieces", "pc", "pcs", "tablet", "tablets", "wipe", "wipes", "sachet", "sachets", "capsule", "capsules", "count", "ct", "unit", "units", "pack", "packs", "pk", "pks"}:
+        elif unit in {"piece", "pieces", "pc", "pcs", "tablet", "tablets", "wipe", "wipes", "sachet", "sachets", "capsule", "capsules", "count", "ct", "unit", "units", "pack", "packs", "pk", "pks", "sheet", "sheets", "roll", "rolls", "bag", "bags", "box", "boxes", "tube", "tubes", "bar", "bars", "packet", "packets", "pad", "pads", "strip", "strips"}:
             unit = "count"
         result.add(normalized_measurement(number, unit))
 
@@ -242,6 +295,56 @@ def measurements(value: str) -> set[str]:
         outer_count, inner_count = compound
         result.add(f"{inner_count}count")
         result.add(f"{outer_count * inner_count}count")
+    return result
+
+
+def measurements(value: str, context_size: str = "") -> set[str]:
+    """
+    Extract measurements from text. Optionally use context_size to infer units
+    for compound expressions like "4 x 120" (without explicit unit).
+    """
+    result = _measurements_internal(value)
+
+    # Handle compound expressions with implicit units (e.g., "4 x 120" where context is "120ml")
+    # Extract the unit from context_size if available
+    inferred_unit = None
+    context_unit_value = None
+    if context_size:
+        ctx_measurements = _measurements_internal(context_size)
+        for m in ctx_measurements:
+            if m.endswith("ml") or m.endswith("g") or m.endswith("mm") or m.endswith("count"):
+                inferred_unit = m[-2:] if m.endswith("ml") else m[-1:]
+                match = re.match(r"(\d+(?:\.\d+)?)(?:ml|g|mm|count)$", m)
+                if match:
+                    context_unit_value = Decimal(match.group(1))
+                break
+
+    # Pattern for "N x NUMBER" without explicit unit (implicit from context)
+    if inferred_unit and context_unit_value is not None:
+        # Pattern: "4 x 120" (pack count x unit size)
+        implicit_pattern = re.compile(
+            rf"(?<!\w)(\d{{1,3}})\s*[x×]\s*(\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+            re.IGNORECASE,
+        )
+        for number_text, unit_text in implicit_pattern.findall(value):
+            number = Decimal(unit_text.replace(",", "."))
+            if abs(number - context_unit_value) < Decimal("0.01"):
+                result.add(normalized_measurement(number, inferred_unit))
+                # Also add the pack count
+                result.add(f"{int(number_text)}count")
+
+        # Pattern: "120 x 4" (unit size x pack count, reversed)
+        implicit_reversed = re.compile(
+            rf"(?<!\w)(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d{{1,3}})\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+            re.IGNORECASE,
+        )
+        for number_text, pack_text in implicit_reversed.findall(value):
+            number = Decimal(number_text.replace(",", "."))
+            pack_count = int(pack_text)
+            if abs(number - context_unit_value) < Decimal("0.01") and pack_count <= 100:
+                result.add(normalized_measurement(number, inferred_unit))
+                result.add(f"{pack_count}count")
+
     return result
 
 
@@ -318,7 +421,7 @@ def extract_source_pack_quantity(pack: str) -> int | None:
 
 
 def source_size_pack_quantity(size: str) -> int | None:
-    count_measurements = [measurement for measurement in measurements(size) if measurement.endswith("count")]
+    count_measurements = [measurement for measurement in _measurements_internal(size) if measurement.endswith("count")]
     if len(count_measurements) != 1:
         return None
     match = re.match(r"(\d+(?:\.\d+)?)count$", count_measurements[0])
@@ -331,7 +434,7 @@ def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[boo
 
     expected_quantity = extract_source_pack_quantity(pack)
     if expected_quantity is not None:
-        outer_count, inner_count, listing_quantity = extract_amazon_pack_components(candidate_title)
+        outer_count, inner_count, listing_quantity = extract_amazon_pack_components(candidate_title, size)
         source_size_quantity = source_size_pack_quantity(size)
 
         # If size contains count info (e.g., "20count"), multiply to get total units
@@ -351,24 +454,23 @@ def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[boo
         ):
             return True, "single-item-fallback"
 
-        # Allow pack count difference when both are multi-packs of the SAME item size
-        # e.g., supplier 6 x 120ml vs Amazon 4 x 120ml
-        # Both are multi-packs (quantity > 1) of the same unit volume
+        # Pack count difference is allowed for same item size - it's a priority/sorting thing, not hard exclusion
+        # e.g., supplier 6 x 120ml vs Amazon 4 x 120ml (same 120ml unit size) -> pack-count-difference-allowed
         if expected_quantity > 1 and listing_quantity > 1 and source_size_quantity is None:
             # Both are multi-packs of a volume/weight item (not count-based)
-            # The item size (120ml) matches, so pack count difference is allowed
+            # The item size matches, so pack count difference is allowed for sorting priority
             return True, "pack-count-difference-allowed"
 
-        return False, "mismatch"
+        return True, "mismatch"  # Not a hard exclusion, just low priority
 
     expected_words = tokens(pack)
     if not expected_words or expected_words.issubset(tokens(candidate_title)):
         return True, "exact"
-    return False, "mismatch"
+    return True, "mismatch"  # Not a hard exclusion
 
 
-def extract_amazon_pack_quantity(title: str) -> int:
-    return extract_amazon_pack_components(title)[2]
+def extract_amazon_pack_quantity(title: str, context_size: str = "") -> int:
+    return extract_amazon_pack_components(title, context_size)[2]
 
 
 def source_pack_equivalent_quantity(pack: str, size: str) -> int | None:
@@ -400,7 +502,7 @@ def format_price_gbp(price_str: str) -> str:
 
 
 def candidate_price_details(price: str, title: str, source_pack: str, source_size: str) -> dict[str, Any]:
-    outer_count, inner_count, listing_quantity = extract_amazon_pack_components(title)
+    outer_count, inner_count, listing_quantity = extract_amazon_pack_components(title, source_size)
     details: dict[str, Any] = {
         "amazonPackCount": listing_quantity,
         "amazonPackBreakdown": f"{outer_count} × {inner_count} ({listing_quantity} total)" if inner_count is not None else str(listing_quantity),
@@ -485,7 +587,7 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
     source_size = source_size_text(product)
     expected_measurements = measurements(source_size)
     size_match = not source_size or (
-        measurements_match(expected_measurements, measurements(candidate_title))
+        measurements_match(expected_measurements, measurements(candidate_title, source_size))
         if expected_measurements
         else tokens(clean_title(source_size)).issubset(candidate_tokens)
     )
@@ -518,32 +620,34 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         reason = f"The Amazon title contains the matching {' + '.join(details)}."
         if pack_match_type == "single-item-fallback":
             reason = "No exact supplier pack was found; this same-size listing is priced as a supplier-pack equivalent."
-    elif title_match and brand_match:
+        elif pack_match_type == "pack-count-difference-allowed":
+            reason = f"{reason} Pack count differs (same item size); matching prioritizes brand, item size, title, and image."
+    elif title_match and brand_match and size_match:
+        # Brand AND size match but variant or other details differ - low tier
         tier = "low"
-        if category_only_match:
-            reason = "The product category aligns, but the listing title lacks enough detail to confirm the exact item."
-        elif nearby_title_match:
-            reason = "Some product words align; compare the image and verify the product type and details."
-        elif source_size and not size_match:
-            reason = "Brand and product name align, but the size differs or is missing."
-        elif product.variant and not variant_match:
-            reason = "Brand and product name align, but the variant needs review."
+        if product.variant and not variant_match:
+            reason = "Brand and size match, but variant needs review."
         elif distinctive_title_tokens and not title_variant_match:
-            reason = "Brand and size align, but distinctive product words are missing or differ; review the variant."
+            reason = "Brand and size match, but distinctive product words are missing or differ; review the variant."
+        elif pack_match_type == "mismatch":
+            reason = "Brand and size match, but pack count differs; same item size so considered a match."
         else:
-            reason = "Brand and product name align; confirm the size and variant manually."
+            reason = "Brand and size match; confirm the variant manually."
+    elif source_size and not size_match:
+        # Size mismatch = different product entirely - HARD EXCLUSION
+        tier = "low"
+        reason = f"Size mismatch: expected '{source_size}' but listing has different size. Different size = different product."
+    elif not brand_match:
+        tier = "low"
+        overlap_percent = round(title_coverage * 100)
+        reason = f"The source brand is not present in this listing; only {overlap_percent}% of source product words overlap."
     else:
         tier = "low"
         overlap_percent = round(title_coverage * 100)
-        if not brand_match:
-            reason = "The source brand is not present in this listing; it is retained among the top Amazon options for manual review."
-        elif not title_match:
-            reason = f"Only {overlap_percent}% of source product words overlap; this listing is retained among the top Amazon options for manual review."
+        if not title_match:
+            reason = f"Only {overlap_percent}% of source product words overlap."
         else:
             reason = "Some product details differ; this listing is retained among the top Amazon options for manual review."
-
-    if product.pack and not pack_match and brand_match and size_match:
-        reason = f"{reason} Pack count differs and is allowed; matching prioritizes brand, item size, title, and image."
 
     classified = {key: value for key, value in candidate.items() if key != "cardText"}
     classified.update(
@@ -972,10 +1076,38 @@ def get_amazon_offer(request: AmazonOfferRequest):
 
 def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     """
-    Build search queries prioritized as: brand -> size -> title -> image
-    NO EAN search, NO Category search. EAN is only used for verification.
-    Avoids duplicating size when already present in title.
-    Uses title without brand for broader queries (brand already added separately).
+    Build search queries with intelligent priority order:
+
+    LAW: Only jump to next priority if NO candidate has BOTH brandMatch AND sizeMatch.
+
+    Priority 1: Brand + Title (BROAD - no size constraint)
+      - brand + title_without_brand
+      - brand + title_without_brand + variant
+
+    Priority 2: Brand + Title + Size (CONSTRAINED - only if Priority 1 finds no brand+size match)
+      - brand + title_without_brand + size
+      - brand + title_without_brand + size + variant
+
+    Priority 3: Original Title (user's exact manual search text)
+      - raw_title (preserves exact text including parentheses)
+
+    Priority 4: Title-only broad searches (no brand)
+      - core_title (cleaned without parentheticals)
+      - cleaned_title
+      - title_without_brand (if different from above)
+
+    Priority 5: Brand + Size / Brand + Variant (Fallbacks)
+      - brand + size
+      - brand + variant
+
+    Priority 6: Image-based searches
+      - brand + core_title + variant + image_terms
+
+    Key intelligence:
+    - Title is cleaned to remove parentheticals like "(wsl)" for broader matching
+    - Size is ONLY added as constraint if broad search fails to find brand+size matches
+    - Raw title preserved for exact manual search replication
+    - Pack count variations (4x120ml, 4x120, 120x4) handled by matching logic, not query building
     """
     queries: list[tuple[str, str]] = []
 
@@ -985,37 +1117,20 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     variant = clean_title(product.variant)
     image_terms = product.image_terms
 
-    # Clean title and extract size from it to avoid duplication
+    # Clean title: remove parentheticals like (wsl), TEMU, ^ chars
     cleaned_title = clean_title(raw_title)
-    title_has_size = bool(size and size.lower() in cleaned_title.lower())
 
-    # Title without size for queries that already include size explicitly
-    title_without_size = cleaned_title
-    if title_has_size and size:
-        title_without_size = re.sub(
-            rf"(?i)\b{re.escape(size)}\b",
-            "",
-            cleaned_title
-        ).strip()
-        title_without_size = " ".join(title_without_size.split())
+    # Also create a "core title" without parentheticals for even broader matching
+    # e.g., "ZOFLORA DISINFECTANT - LEMON ZING (wsl)" -> "ZOFLORA DISINFECTANT - LEMON ZING"
+    core_title = re.sub(r"\s*\([^)]*\)\s*", " ", cleaned_title)
+    core_title = " ".join(core_title.split())
 
-    # Title without brand for queries that add brand separately
-    # This avoids "Zoflora Zoflora Disinfectant..." duplicates
-    title_without_brand = cleaned_title
+    # Title without brand to avoid "Zoflora Zoflora..."
+    title_without_brand = core_title
     if brand:
         brand_tokens = set(clean_title(brand).lower().split())
         title_words = title_without_brand.split()
         title_without_brand = " ".join(w for w in title_words if w.lower() not in brand_tokens)
-
-    # Title without both brand and size
-    title_without_brand_and_size = title_without_brand
-    if title_has_size and size:
-        title_without_brand_and_size = re.sub(
-            rf"(?i)\b{re.escape(size)}\b",
-            "",
-            title_without_brand
-        ).strip()
-        title_without_brand_and_size = " ".join(title_without_brand_and_size.split())
 
     def add_query(stage: str, parts: list[str]):
         """Add query if it has content."""
@@ -1023,80 +1138,46 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
         if query:
             queries.append((stage, query))
 
-    # --- Priority 1: Brand + Size (most specific, narrowest results) ---
-    if brand and size:
-        add_query("brand-size", [brand, size])
-
-    # Brand + Size + Variant
-    if brand and size and variant:
-        add_query("brand-size-variant", [brand, size, variant])
-
-    # --- Priority 2: Brand + Title (size already in title) ---
-    # When title already has size, don't add it again
-    if brand and cleaned_title:
-        if title_has_size and size:
-            add_query("brand-title-size", [brand, title_without_brand_and_size])  # size & brand already in title
-        else:
-            add_query("brand-title-size", [brand, cleaned_title, size])
-
-    # Brand + Title + Variant (size already in title)
-    if brand and cleaned_title and variant:
-        if title_has_size and size:
-            add_query("brand-title-size-variant", [brand, title_without_brand_and_size, variant])
-        else:
-            add_query("brand-title-size-variant", [brand, cleaned_title, size, variant])
-
-    # --- Priority 3: Brand + Title (without size for broader match) ---
-    # Use title without brand to avoid "Zoflora Zoflora..."
+    # --- Priority 1: Brand + Title (BROAD - no size constraint) ---
+    # This finds ALL listings for this brand+title, including different pack sizes
     if brand and title_without_brand:
         add_query("brand-title", [brand, title_without_brand])
 
     if brand and title_without_brand and variant:
         add_query("brand-title-variant", [brand, title_without_brand, variant])
 
-    # --- Priority 4: Size + Title (when brand not available) ---
-    if size and cleaned_title:
-        if title_has_size:
-            add_query("size-title", [title_without_brand_and_size])  # size already in title
-        else:
-            add_query("size-title", [size, cleaned_title])
+    # --- Priority 2: Brand + Title + Size (CONSTRAINED - only if Priority 1 fails) ---
+    # Only run if Priority 1 found NO brand+size matches
+    if brand and title_without_brand and size:
+        add_query("brand-title-size", [brand, title_without_brand, size])
 
-    if size and cleaned_title and variant:
-        if title_has_size:
-            add_query("size-title-variant", [title_without_brand_and_size, variant])
-        else:
-            add_query("size-title-variant", [size, cleaned_title, variant])
+    if brand and title_without_brand and size and variant:
+        add_query("brand-title-size-variant", [brand, title_without_brand, size, variant])
 
-    # --- Priority 5: Title only (broadest) ---
+    # --- Priority 3: Original Title (Exact user text - preserves parentheses) ---
+    # This replicates what user would type manually into Amazon search
+    if raw_title:
+        queries.append(("title-original", raw_title))
+
+    # --- Priority 4: Title-only broad searches (no brand) ---
+    if core_title and core_title != cleaned_title:
+        add_query("title-core", [core_title])
     if cleaned_title:
         add_query("title-only", [cleaned_title])
+    if title_without_brand and title_without_brand != core_title and title_without_brand != cleaned_title:
+        add_query("title-no-brand", [title_without_brand])
 
-    if cleaned_title and variant:
-        add_query("title-variant", [cleaned_title, variant])
+    # --- Priority 5: Brand + Size / Brand + Variant (Fallbacks) ---
+    if brand and size:
+        add_query("brand-size", [brand, size])
 
-    # --- Priority 6: Image-based searches (when image_terms available) ---
+    if brand and variant:
+        add_query("brand-variant", [brand, variant])
+
+    # --- Priority 6: Image-based searches ---
     if image_terms:
-        image_query_parts = []
-        if brand:
-            image_query_parts.append(brand)
-        if size:
-            image_query_parts.append(size)
-        if cleaned_title:
-            image_query_parts.append(cleaned_title)
-        if variant:
-            image_query_parts.append(variant)
-        image_query_parts.append(image_terms)
-        image_query = clean_title(" ".join(image_query_parts))
-        queries.append(("image", image_query))
-
-        # Image + brand + size (more focused)
-        if brand and size:
-            image_brand_size = clean_title(f"{brand} {size} {image_terms}")
-            queries.append(("image-brand-size", image_brand_size))
-
-    # NO Category searches
-    # NO EAN search (EAN used only for verification on result pages)
-    # NO Brand-only fallback (too broad)
+        image_query_parts = [brand, core_title, variant, image_terms]
+        add_query("image", image_query_parts)
 
     # Deduplicate and limit
     seen_queries = set()
@@ -1270,27 +1351,23 @@ def match_product(product: MatchRequest):
         # Disabled - no EAN search, only title-based matching
         return False
 
-    def has_precise_title_match() -> bool:
+    def has_brand_and_size_match() -> bool:
+        """Check if any candidate has both brandMatch and sizeMatch - the 'basic law' for stopping search."""
         return any(
             classified["brandMatch"]
             and classified["sizeMatch"]
-            and classified["variantMatch"]
-            and classified["packMatch"]
-            and float(classified["titleScore"]) >= 0.82
             for candidate in candidates_by_key.values()
             for classified in (classify_candidate(effective_product, candidate),)
         )
 
     try:
         discovery_needed = not product.brand
-        # No EAN probe - run all queries in order: brand-size → brand-title-size → brand-title → size-title → title → image
-        checked_title_queries = 0
+        # Run queries in priority order: brand+title → brand+title+size → title-original → title-only → brand+size → brand+variant → image
+        # Early exit when we have BOTH brandMatch AND sizeMatch (the "basic law")
         for stage, query in initial_queries:
             page_has_relevant_candidate = search_and_collect(stage, query)
-            if stage in TITLE_QUERY_STAGES:
-                checked_title_queries += 1
-            # Early exit if we have a strong match (brand + size + variant + high title score)
-            if not discovery_needed and checked_title_queries >= 2 and page_has_relevant_candidate and has_precise_title_match():
+            # Early exit: if we found a candidate with BOTH brand AND size match, stop searching
+            if has_brand_and_size_match():
                 break
 
         if discovery_needed and candidates_by_key:
@@ -1303,9 +1380,8 @@ def match_product(product: MatchRequest):
                 if query.casefold() in searched_query_keys or len(searched_queries) >= MAX_SEARCH_QUERIES:
                     continue
                 page_has_relevant_candidate = search_and_collect(stage, query)
-                if stage in TITLE_QUERY_STAGES:
-                    checked_title_queries += 1
-                if checked_title_queries >= 2 and page_has_relevant_candidate and has_precise_title_match():
+                # Early exit after brand discovery too
+                if has_brand_and_size_match():
                     break
     except AmazonBlocked as error:
         candidates = ranked_candidates()

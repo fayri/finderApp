@@ -219,63 +219,18 @@ function buildSearchQueries(product: SupplierProduct): Array<[string, string]> {
   const queries: Array<[string, string]> = [];
   const cleanTitle = getSearchTitle(product.title);
   const brand = product.brand.trim();
-  const size = product.size.trim();
-  const variant = product.variant.trim();
-  const pack = product.pack.trim();
 
-  const packCount = parsePack(pack);
-  const packStr = packCount ? `Pack of ${packCount}` : "";
+  // Search by title only - Amazon returns results, then we filter by:
+  // 1. Brand check
+  // 2. Size check
+  // 3. Title keyword coverage
+  if (cleanTitle) {
+    queries.push([cleanTitle, "title"]);
+  }
 
-  // Priority 1: Brand + Title
+  // Fallback: brand + title if title alone returns too many/no results
   if (brand && cleanTitle) {
     queries.push([`${brand} ${cleanTitle}`, "brand-title"]);
-    if (packStr) queries.push([`${brand} ${cleanTitle} ${packStr}`, "brand-title-pack"]);
-  }
-
-  // Priority 2: Brand + Title + Size
-  if (brand && cleanTitle && size) {
-    queries.push([`${brand} ${cleanTitle} ${size}`, "brand-title-size"]);
-    if (packStr) queries.push([`${brand} ${cleanTitle} ${size} ${packStr}`, "brand-title-size-pack"]);
-  }
-
-  // Priority 3: Title original
-  if (cleanTitle) {
-    queries.push([cleanTitle, "title-original"]);
-  }
-
-  // Priority 4: Brand + Size
-  if (brand && size) {
-    queries.push([`${brand} ${size}`, "brand-size"]);
-    if (packStr) queries.push([`${brand} ${size} ${packStr}`, "brand-size-pack"]);
-  }
-
-  // Priority 5: Brand + Variant
-  if (brand && variant) {
-    queries.push([`${brand} ${variant}`, "brand-variant"]);
-  }
-
-  // Priority 6: EAN
-  if (product.ean && product.ean.length >= 8) {
-    queries.push([product.ean, "ean"]);
-  }
-
-  // Priority 7: Size + Title
-  if (size && cleanTitle) {
-    queries.push([`${size} ${cleanTitle}`, "size-title"]);
-    if (variant) queries.push([`${size} ${cleanTitle} ${variant}`, "size-title-variant"]);
-  }
-
-  // Priority 8: Brand only
-  if (brand) {
-    queries.push([brand, "brand-only"]);
-  }
-
-  // Priority 9: Title key terms
-  if (cleanTitle) {
-    const words = cleanTitle.split(' ');
-    if (words.length > 3) {
-      queries.push([words.slice(0, 5).join(' '), "title-key-terms"]);
-    }
   }
 
   return queries.slice(0, MAX_SEARCH_QUERIES);

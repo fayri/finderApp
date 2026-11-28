@@ -26,7 +26,7 @@ MAX_PAGE_BYTES = 4 * 1024 * 1024
 MAX_SEARCH_QUERIES = 10
 MAX_BRAND_DETAIL_LOOKUPS = 5
 # MAX_MATCH_CANDIDATES removed - return all findings
-TITLE_QUERY_STAGES = {"image", "detail", "title-specific", "title-fallback", "size-title", "brand-size"}
+TITLE_QUERY_STAGES = {"brand-size", "brand-size-variant", "brand-title-size", "brand-title-size-variant", "brand-title", "brand-title-variant", "size-title", "size-title-variant", "title-only", "title-variant", "image", "image-brand-size"}
 TITLE_CONNECTOR_WORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
 CATEGORY_DICTIONARY = json.loads(
     (Path(__file__).resolve().parent / "product_category_terms.json").read_text(encoding="utf-8")
@@ -957,21 +957,15 @@ def get_amazon_offer(request: AmazonOfferRequest):
 def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     """
     Build search queries prioritized as: brand -> size -> title -> image
-    This narrows down searches to exact or nearly exact products first.
+    NO EAN search, NO Category search. EAN is only used for verification.
     """
     queries: list[tuple[str, str]] = []
-    if product.ean:
-        queries.append(("ean", product.ean))
 
     size = source_size_text(product)
     brand = product.brand
     title = clean_title(product.title)
     variant = clean_title(product.variant)
     image_terms = product.image_terms
-
-    def size_is_present(value: str) -> bool:
-        expected = measurements(size)
-        return expected.issubset(measurements(value)) if expected else bool(size and tokens(size).issubset(tokens(value)))
 
     # --- Priority 1: Brand + Size (most specific, narrowest results) ---
     if brand and size:
@@ -1039,25 +1033,9 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
             image_brand_size = clean_title(f"{brand} {size} {image_terms}")
             queries.append(("image-brand-size", image_brand_size))
 
-    # --- Priority 7: Category-expanded searches ---
-    category = CATEGORY_DICTIONARY.get(product.category, {})
-    category_terms = [*category.get("queryTerms", []), *category.get("searchTerms", [])]
-
-    # Brand + size + category term
-    if brand and size:
-        for term in category_terms[:2]:  # Limit category terms
-            cat_query = clean_title(f"{brand} {size} {term}")
-            queries.append(("brand-size-category", cat_query))
-
-    # Brand + title + category term
-    if brand and title:
-        for term in category_terms[:2]:
-            cat_query = clean_title(f"{brand} {title} {term}")
-            queries.append(("brand-title-category", cat_query))
-
-    # --- Priority 8: Brand-only search (fallback) ---
-    if brand:
-        queries.append(("brand-only", brand))
+    # NO Category searches
+    # NO EAN search (EAN used only for verification on result pages)
+    # NO Brand-only fallback (too broad)
 
     # Deduplicate and limit
     seen_queries = set()
@@ -1228,11 +1206,8 @@ def match_product(product: MatchRequest):
         return page_has_relevant_candidate
 
     def has_size_matched_ean() -> bool:
-        return any(
-            classified["eanMatch"] and classified["sizeMatch"] and classified["brandMatch"]
-            for candidate in candidates_by_key.values()
-            for classified in (classify_candidate(effective_product, candidate),)
-        )
+        # Disabled - no EAN search, only title-based matching
+        return False
 
     def has_precise_title_match() -> bool:
         return any(
@@ -1247,32 +1222,28 @@ def match_product(product: MatchRequest):
 
     try:
         discovery_needed = not product.brand
-        probe_query_limit = 2 if product.ean else 1
-        probe_queries = initial_queries[:probe_query_limit] if discovery_needed else initial_queries
+        # No EAN probe - run all queries in order: brand-size → brand-title-size → brand-title → size-title → title → image
         checked_title_queries = 0
-        for stage, query in probe_queries:
+        for stage, query in initial_queries:
             page_has_relevant_candidate = search_and_collect(stage, query)
             if stage in TITLE_QUERY_STAGES:
                 checked_title_queries += 1
-            if has_size_matched_ean():
-                break
+            # Early exit if we have a strong match (brand + size + variant + high title score)
             if not discovery_needed and checked_title_queries >= 2 and page_has_relevant_candidate and has_precise_title_match():
                 break
 
-        if discovery_needed and candidates_by_key and not has_size_matched_ean():
+        if discovery_needed and candidates_by_key:
             discovered_brand = discover_product_brand(product, candidates_by_key)
             if discovered_brand:
                 effective_product = product.model_copy(update={"brand": discovered_brand})
 
-        if discovery_needed and not has_size_matched_ean():
+        if discovery_needed:
             for stage, query in build_search_queries(effective_product):
                 if query.casefold() in searched_query_keys or len(searched_queries) >= MAX_SEARCH_QUERIES:
                     continue
                 page_has_relevant_candidate = search_and_collect(stage, query)
                 if stage in TITLE_QUERY_STAGES:
                     checked_title_queries += 1
-                if has_size_matched_ean():
-                    break
                 if checked_title_queries >= 2 and page_has_relevant_candidate and has_precise_title_match():
                     break
     except AmazonBlocked as error:

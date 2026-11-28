@@ -1,0 +1,820 @@
+{
+  "version": "1.0",
+  "description": "Product descriptor words that appear in Amazon UK titles but are NOT differentiating features. These are manufacturing/formulation descriptors, not variant identifiers.",
+  "lastUpdated": "2026-11-28",
+  "categories": {
+    "formulation": {
+      "description": "Product formulation/concentration descriptors",
+      "words": [
+        "concentrated",
+        "concentrate",
+        "ultra concentrated",
+        "super concentrated",
+        "highly concentrated",
+        "extra concentrated",
+        "double concentrated",
+        "triple concentrated",
+        "dilutable",
+        "ready to use",
+        "r.t.u.",
+        "rtu",
+        "pre-diluted",
+        "undiluted",
+        "neat",
+        "full strength",
+        "industrial strength",
+        "professional strength",
+        "commercial strength"
+      ]
+    },
+    "quality_grade": {
+      "description": "Quality/grade descriptors",
+      "words": [
+        "original",
+        "classic",
+        "traditional",
+        "authentic",
+        "genuine",
+        "pure",
+        "natural",
+        "organic",
+        "premium",
+        "deluxe",
+        "supreme",
+        "ultra",
+        "advanced",
+        "enhanced",
+        "improved",
+        "new",
+        "new improved",
+        "reformulated",
+        "updated",
+        "latest",
+        "v2",
+        "version 2"
+      ]
+    },
+    "professional_use": {
+      "description": "Professional/commercial use descriptors",
+      "words": [
+        "professional",
+        "pro",
+        "commercial",
+        "industrial",
+        "trade",
+        "contractor",
+        "expert",
+        "specialist",
+        "heavy duty",
+        "heavy-duty",
+        "contract",
+        "bulk",
+        "wholesale",
+        "janitorial",
+        "catering",
+        "institutional",
+        "nhs approved",
+        "hospital grade",
+        "medical grade"
+      ]
+    },
+    "packaging_format": {
+      "description": "Packaging format descriptors (NOT pack count)",
+      "words": [
+        "refill",
+        "refill pack",
+        "refill pouch",
+        "eco refill",
+        "eco-refill",
+        "pouch",
+        "bag in box",
+        "bag-in-box",
+        "doypack",
+        "stand up pouch",
+        "squeeze bottle",
+        "trigger spray",
+        "pump bottle",
+        "spray bottle",
+        "aerosol",
+        "canister",
+        "tin",
+        "jar",
+        "tub",
+        "bucket",
+        "drum",
+        "ibc",
+        "tote"
+      ]
+    },
+    "scent_descriptors": {
+      "description": "Generic scent descriptors (not specific fragrance names)",
+      "words": [
+        "fresh",
+        "freshness",
+        "clean",
+        "crisp",
+        "pure",
+        "natural scent",
+        "original scent",
+        "classic scent",
+        "signature scent",
+        "light scent",
+        "mild scent",
+        "strong scent",
+        "long lasting",
+        "long-lasting",
+        "fragrance free",
+        "fragrance-free",
+        "unscented",
+        "unperfumed",
+        "hypoallergenic",
+        "sensitive"
+      ]
+    },
+    "size_descriptors": {
+      "description": "Size-related descriptors (handled separately by size matching)",
+      "words": [
+        "large",
+        "extra large",
+        "xl",
+        "jumbo",
+        "family",
+        "family size",
+        "value",
+        "value size",
+        "economy",
+        "economy size",
+        "bulk",
+        "bulk size",
+        "mega",
+        "super",
+        "maxi",
+        "mini",
+        "travel",
+        "travel size",
+        "sample",
+        "trial",
+        "trial size"
+      ]
+    },
+    "multi_purpose": {
+      "description": "Multi-purpose/all-in-one descriptors",
+      "words": [
+        "multi purpose",
+        "multi-purpose",
+        "all purpose",
+        "all-purpose",
+        "all in one",
+        "all-in-one",
+        "3 in 1",
+        "3-in-1",
+        "4 in 1",
+        "4-in-1",
+        "5 in 1",
+        "5-in-1",
+        "versatile",
+        "universal"
+      ]
+    },
+    "eco_green": {
+      "description": "Eco/environmental descriptors",
+      "words": [
+        "eco",
+        "eco friendly",
+        "eco-friendly",
+        "green",
+        "sustainable",
+        "biodegradable",
+        "plant based",
+        "plant-based",
+        "plant derived",
+        "plant-derived",
+        "vegan",
+        "cruelty free",
+        "cruelty-free",
+        "not tested on animals",
+        "recyclable",
+        "recycled",
+        "plastic free",
+        "plastic-free",
+        "zero waste",
+        "carbon neutral",
+        "carbon-neutral"
+      ]
+    },
+    "germ_kill": {
+      "description": "Germ kill/antibacterial claims",
+      "words": [
+        "kills 99.9",
+        "kills 99.99",
+        "kills 99.999",
+        "antibacterial",
+        "anti-bacterial",
+        "antimicrobial",
+        "anti-microbial",
+        "germ kill",
+        "germ-kill",
+        "germ protection",
+        "germ-protection",
+        "hygiene",
+        "sanitising",
+        "sanitizing",
+        "disinfecting",
+        "virucidal",
+        "bactericidal",
+        "fungicidal",
+        "yeasticidal",
+        "en14476",
+        "en1276",
+        "en13697",
+        "en1650",
+        "en13727",
+        "en14348"
+      ]
+    },
+    "brand_extensions": {
+      "description": "Common brand line extensions",
+      "words": [
+        "professional",
+        "pro",
+        "expert",
+        "master",
+        "ultra",
+        "max",
+        "plus",
+        "extra",
+        "advanced",
+        "premium",
+        "gold",
+        "platinum",
+        "diamond",
+        "elite",
+        "select",
+        "choice",
+        "prime",
+        "signature",
+        "collection",
+        "range",
+        "series"
+      ]
+    }
+  },
+  "brand_specific": {
+    "description": "Descriptor words specific to certain brands",
+    "zoflora": [
+      "concentrated",
+      "original",
+      "classic"
+    ],
+    "dettol": [
+      "original",
+      "antibacterial",
+      "antiseptic",
+      "disinfectant",
+      "healthy clean",
+      "skin care"
+    ],
+    "flash": [
+      "original",
+      "concentrated",
+      "speed",
+      "speedmop"
+    ],
+    "fairy": [
+      "original",
+      "platinum",
+      "antibacterial",
+      "non bio",
+      "non-bio",
+      "bio"
+    ],
+    "persil": [
+      "bio",
+      "non bio",
+      "non-bio",
+      "color",
+      "colour",
+      "white",
+      "capsules",
+      "liquid",
+      "powder"
+    ],
+    "ariel": [
+      "original",
+      "excel",
+      "platinum",
+      "color",
+      "colour",
+      "bio",
+      "non bio",
+      "non-bio",
+      "pods",
+      "liquid",
+      "powder"
+    ],
+    "lenor": [
+      "concentrated",
+      "unbeatable",
+      "outdoorable",
+      "spring",
+      "awakening",
+      "gold",
+      "pink"
+    ],
+    "comfort": [
+      "concentrated",
+      "pure",
+      "sunshine",
+      "blue",
+      "pink",
+      "ultra"
+    ],
+    "finish": [
+      "quantum",
+      "ultimate",
+      "all in one",
+      "all-in-one",
+      "powerball",
+      "gel",
+      "tablets",
+      "powder"
+    ],
+    "calgon": [
+      "3 in 1",
+      "3-in-1",
+      "tabs",
+      "tablets",
+      "gel",
+      "powder"
+    ],
+    "vanish": [
+      "oxi action",
+      "oxi-action",
+      "gold",
+      "white",
+      "colour",
+      "color",
+      "crystal white",
+      "crystal white",
+      "napisan"
+    ],
+    "ace": [
+      "gentle",
+      "original",
+      "bleach",
+      "colour",
+      "color"
+    ],
+    "domestos": [
+      "original",
+      "extended",
+      "germ kill",
+      "germ-kill",
+      "thick bleach",
+      "citrus",
+      "lime",
+      "pine"
+    ],
+    "cif": [
+      "cream",
+      "spray",
+      "power",
+      "shine",
+      "active",
+      "original",
+      "lemon",
+      "baking soda",
+      "baking-soda"
+    ],
+    "mr muscle": [
+      "original",
+      "platinum",
+      "oven",
+      "drain",
+      "foaming",
+      "gel"
+    ],
+    "harpic": [
+      "power plus",
+      "power-plus",
+      "active",
+      "fresh",
+      "pine",
+      "citrus",
+      "lemon",
+      "original"
+    ],
+    "duck": [
+      "fresh discs",
+      "fresh-discs",
+      "gel",
+      "original",
+      "marine",
+      "lavender",
+      "citrus"
+    ],
+    "efferdent": [
+      "original",
+      "mint",
+      "fresh",
+      "extra strength"
+    ],
+    "steradent": [
+      "original",
+      "pro",
+      "active",
+      "extra",
+      "whitening"
+    ],
+    "colgate": [
+      "total",
+      "max white",
+      "max-white",
+      "sensitive",
+      "cavity protection",
+      "cavity-protection",
+      "herbal",
+      "charcoal",
+      "optic white",
+      "optic-white"
+    ],
+    "oral-b": [
+      "pro",
+      "expert",
+      "sensitive",
+      "gum",
+      "3d white",
+      "3d-white",
+      "deep clean",
+      "deep-clean"
+    ],
+    "sensodyne": [
+      "repair",
+      "protect",
+      "rapid",
+      "pronamel",
+      "pro-enamel",
+      "gentle",
+      "whitening",
+      "fresh"
+    ],
+    "nurofen": [
+      "express",
+      "plus",
+      "forte",
+      "meltlets",
+      "liquid",
+      "capsules",
+      "tablets",
+      "for children",
+      "for-children"
+    ],
+    "paracetamol": [
+      "tablets",
+      "caplets",
+      "capsules",
+      "liquid",
+      "suspension",
+      "soluble",
+      "effervescent",
+      "plus",
+      "extra"
+    ],
+    "ibuprofen": [
+      "tablets",
+      "caplets",
+      "capsules",
+      "liquid",
+      "gel",
+      "gel caps",
+      "gel-caps",
+      "plus",
+      "extra",
+      "maximum strength",
+      "maximum-strength"
+    ],
+    "strepsils": [
+      "original",
+      "honey lemon",
+      "honey-lemon",
+      "orange",
+      "strawberry",
+      "blackcurrant",
+      "extra",
+      "plus",
+      "max",
+      "lozenges"
+    ],
+    "listerine": [
+      "total care",
+      "total-care",
+      "cool mint",
+      "cool-mint",
+      "fresh burst",
+      "fresh-burst",
+      "advanced",
+      "gum therapy",
+      "gum-therapy",
+      "teeth defence",
+      "teeth-defence",
+      "teeth defense",
+      "teeth-defense",
+      "zero",
+      "alcohol free",
+      "alcohol-free"
+    ],
+    "gaviscon": [
+      "original",
+      "advance",
+      "double action",
+      "double-action",
+      "infant",
+      "peppermint",
+      "aniseed",
+      "strawberry",
+      "liquid",
+      "tablets",
+      "sachets"
+    ],
+    "rennies": [
+      "original",
+      "peppermint",
+      "spearmint",
+      "orange",
+      "fruit",
+      "defy",
+      "extra"
+    ],
+    "andrews": [
+      "original",
+      "salts",
+      "antacid"
+    ],
+    "imodium": [
+      "original",
+      "plus",
+      "instants",
+      "capsules",
+      "tablets",
+      "liquid"
+    ],
+    "senokot": [
+      "tablets",
+      "max strength",
+      "max-strength",
+      "syrup",
+      "adult"
+    ],
+    "dulcolax": [
+      "tablets",
+      "suppositories",
+      "drops",
+      "pico",
+      "bisacodyl"
+    ],
+    "movicol": [
+      "plain",
+      "chocolate",
+      "lemon",
+      "lime",
+      "half",
+      "junior"
+    ],
+    "laxido": [
+      "orange",
+      "lemon",
+      "plain"
+    ],
+    "fybogel": [
+      "original",
+      "hi-fibre",
+      "hi-fiber",
+      "orange",
+      "lemon"
+    ],
+    "optrex": [
+      "eye drops",
+      "eye-drops",
+      "infected eyes",
+      "infected-eyes",
+      "bloodshot",
+      "tired eyes",
+      "tired-eyes",
+      "allergic",
+      "dry eyes",
+      "dry-eyes",
+      "night",
+      "intensive"
+    ],
+    "muro": [
+      "128",
+      "128 eye drops",
+      "128-eye-drops",
+      "saline"
+    ],
+    "hylo": [
+      "forte",
+      "comod",
+      "care",
+      "gel",
+      "night"
+    ],
+    "systane": [
+      "ultra",
+      "complete",
+      "balance",
+      "hydration",
+      "gel",
+      "nighttime",
+      "daytime"
+    ],
+    "blink": [
+      "contacts",
+      "intensive",
+      "tears",
+      "gel"
+    ],
+    "vicks": [
+      "vaporub",
+      "vapo-rub",
+      "vapour rub",
+      "vapour-rub",
+      "sinex",
+      "first defence",
+      "first-defence",
+      "zyrtec",
+      "vaposteam",
+      "vapo-steam"
+    ],
+    "olbas": [
+      "oil",
+      "pastilles",
+      "inhaler",
+      "for children",
+      "for-children"
+    ],
+    "sudafed": [
+      "blocked nose",
+      "blocked-nose",
+      "decongestant",
+      "max strength",
+      "max-strength",
+      "sinus",
+      "pressure",
+      "pain",
+      "day",
+      "night"
+    ],
+    "benylin": [
+      "chesty",
+      "dry",
+      "mucus",
+      "children",
+      "infant",
+      "four",
+      "4",
+      "day",
+      "night",
+      "original"
+    ],
+    "covonia": [
+      "chesty",
+      "dry",
+      "bronchial",
+      "catarrh",
+      "original",
+      "herbal",
+      "menthol"
+    ],
+    "robitussin": [
+      "chesty",
+      "dry",
+      "mucus",
+      "dm",
+      "cf",
+      "ac",
+      "maximum strength",
+      "maximum-strength"
+    ],
+    "night nurse": [
+      "liquid",
+      "capsules",
+      "original",
+      "day",
+      "day & night",
+      "day-night"
+    ],
+    "lemsip": [
+      "max",
+      "max strength",
+      "max-strength",
+      "cold flu",
+      "cold-flu",
+      "lemon",
+      "blackcurrant",
+      "sachets",
+      "powder",
+      "capsules",
+      "all in one",
+      "all-in-one"
+    ],
+    "beechams": [
+      "all in one",
+      "all-in-one",
+      "cold flu",
+      "cold-flu",
+      "flu plus",
+      "flu-plus",
+      "powder",
+      "sachets",
+      "tablets",
+      "capsules"
+    ],
+    "actifed": [
+      "multi action",
+      "multi-action",
+      "tablets",
+      "liquid",
+      "original"
+    ],
+    "piriton": [
+      "syrup",
+      "tablets",
+      "allergy",
+      "chlorphenamine",
+      "original"
+    ],
+    "clarityn": [
+      "tablets",
+      "syrup",
+      "rapid",
+      "original",
+      "loratadine"
+    ],
+    "zyrtec": [
+      "tablets",
+      "liquid",
+      "rapid",
+      "original",
+      "cetirizine"
+    ],
+    "benadryl": [
+      "allergy",
+      "plus",
+      "children",
+      "cream",
+      "one a day",
+      "one-a-day",
+      "original"
+    ],
+    "cetirizine": [
+      "tablets",
+      "liquid",
+      "10mg",
+      "10 mg",
+      "10mg tablets",
+      "10 mg tablets",
+      "original"
+    ],
+    "loratadine": [
+      "tablets",
+      "syrup",
+      "10mg",
+      "10 mg",
+      "10mg tablets",
+      "10 mg tablets",
+      "original"
+    ],
+    "fexofenadine": [
+      "tablets",
+      "120mg",
+      "120 mg",
+      "120mg tablets",
+      "120 mg tablets",
+      "180mg",
+      "180 mg",
+      "180mg tablets",
+      "180 mg tablets",
+      "original"
+    ],
+    "chlorphenamine": [
+      "tablets",
+      "syrup",
+      "4mg",
+      "4 mg",
+      "4mg tablets",
+      "4 mg tablets",
+      "original"
+    ],
+    "prizine": [
+      "tablets",
+      "syrup",
+      "original"
+    ],
+    "piriteze": [
+      "tablets",
+      "syrup",
+      "original"
+    ]
+  }
+}

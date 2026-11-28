@@ -17,6 +17,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Import product descriptor dictionary
+from product_descriptors import ProductDescriptors, get_descriptors
+
 REGAL_ORIGIN = "https://regalsales.co.uk"
 AMAZON_ORIGIN = "https://www.amazon.co.uk"
 AMAZON_MIN_GAP_SECONDS = 3.0
@@ -39,6 +42,9 @@ HEADERS = {
     "Referer": "https://www.google.com/",
     "Upgrade-Insecure-Requests": "1",
 }
+
+# Initialize product descriptor dictionary
+PRODUCT_DESCRIPTORS = get_descriptors()
 
 Tier = Literal["high", "medium", "low"]
 
@@ -194,6 +200,7 @@ def extract_amazon_pack_components(title: str, context_size: str = "") -> tuple[
 
         if inferred_unit and context_unit_value is not None:
             # Pattern: "4 x 120" (pack count x unit size, without unit, context confirms unit size)
+            # Also handles "4x120" (no spaces)
             implicit_volume_multiplier = re.search(
                 rf"(?<!\w)(\d{{1,3}})\s*[x×]\s*(\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
                 title,
@@ -225,6 +232,33 @@ def extract_amazon_pack_components(title: str, context_size: str = "") -> tuple[
                 elif first_num <= 100 and second_num == int(context_unit_value):
                     return max(1, int(first_num)), None, max(1, int(first_num))
 
+            # Additional pattern: "4x120" (no spaces around x) with unit in context
+            # This handles "4x120" as "4 x 120"
+            implicit_no_space = re.search(
+                rf"(?<!\w)(\d{{1,3}})[x×](\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+                title,
+                re.IGNORECASE,
+            )
+            if implicit_no_space:
+                pack_count = max(1, int(implicit_no_space.group(1)))
+                unit_size = Decimal(implicit_no_space.group(2).replace(",", "."))
+                if abs(unit_size - context_unit_value) < Decimal("0.01"):
+                    return pack_count, None, pack_count
+
+            # Reversed no-space: "120x4"
+            implicit_reversed_no_space = re.search(
+                rf"(?<!\w)(\d+(?:[.,]\d+)?)[x×](\d{{1,3}})\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+                title,
+                re.IGNORECASE,
+            )
+            if implicit_reversed_no_space:
+                first_num = Decimal(implicit_reversed_no_space.group(1).replace(",", "."))
+                second_num = max(1, int(implicit_reversed_no_space.group(2)))
+                if abs(first_num - context_unit_value) < Decimal("0.01"):
+                    return second_num, None, second_num
+                elif first_num <= 100 and second_num == int(context_unit_value):
+                    return max(1, int(first_num)), None, max(1, int(first_num))
+
     compound = compound_pack_counts(title)
     if compound:
         outer_count, inner_count = compound
@@ -244,6 +278,7 @@ def extract_amazon_pack_components(title: str, context_size: str = "") -> tuple[
 
 def _measurements_internal(value: str) -> set[str]:
     """Internal measurements extraction without context inference (to avoid recursion)."""
+    # First pattern: standard "NUMBER UNIT" with optional "x COUNT"
     pattern = re.compile(
         r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?|sheets?|rolls?|bags?|boxes?|tubes?|bars?|packets?|sachets?|pads?|strips?)(?:\s*[x×]\s*\d{1,3})?\b",
         re.IGNORECASE,
@@ -275,6 +310,46 @@ def _measurements_internal(value: str) -> set[str]:
         elif unit in {"piece", "pieces", "pc", "pcs", "tablet", "tablets", "wipe", "wipes", "sachet", "sachets", "capsule", "capsules", "count", "ct", "unit", "units", "pack", "packs", "pk", "pks", "sheet", "sheets", "roll", "rolls", "bag", "bags", "box", "boxes", "tube", "tubes", "bar", "bars", "packet", "packets", "pad", "pads", "strip", "strips"}:
             unit = "count"
         result.add(normalized_measurement(number, unit))
+
+    # Second pattern: "NUMBER x NUMBER UNIT" (e.g., "4x120ml", "4 x 120ml") - no space before x
+    # This handles cases like "4x120ml" where the unit is attached to the second number
+    pattern_no_space = re.compile(
+        r"(?<!\w)(\d{1,3})[x×](\d+(?:[.,]\d+)?)\s*(fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m)\b",
+        re.IGNORECASE,
+    )
+    for pack_text, number_text, unit_text in pattern_no_space.findall(value):
+        number = Decimal(number_text.replace(",", "."))
+        unit = unit_text.lower().replace(" ", "").replace(".", "")
+        if unit in {"l", "litre", "litres", "liter", "liters", "millilitre", "millilitres", "milliliter", "milliliters"}:
+            number *= 1000
+            unit = "ml"
+        elif unit == "cl":
+            number *= 10
+            unit = "ml"
+        elif unit in {"kg", "kilogram", "kilograms"}:
+            number *= 1000
+            unit = "g"
+        elif unit in {"mg", "milligram", "milligrams"}:
+            number /= 1000
+            unit = "g"
+        elif unit in {"gram", "grams", "gramme", "grammes", "gm"}:
+            unit = "g"
+        elif unit in {"m", "metre", "metres", "meter", "meters"}:
+            number *= 1000
+            unit = "mm"
+        elif unit in {"cm", "centimetre", "centimetres", "centimeter", "centimeters"}:
+            number *= 10
+            unit = "mm"
+        result.add(normalized_measurement(number, unit))
+        result.add(f"{int(pack_text)}count")
+
+    # Also extract pack count from "NUMBER UNIT x NUMBER" format
+    pattern_reversed = re.compile(
+        r"(?<!\w)\d+(?:[.,]\d+)?\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g)\s*[x×]\s*(\d{1,3})\b",
+        re.IGNORECASE,
+    )
+    for number_text in pattern_reversed.findall(value):
+        result.add(f"{int(number_text)}count")
 
     for number_text in re.findall(r"\b(?:pack|pk|case|set|box|bundle)\s*(?:of\s*)?(\d{1,4})\b", value, re.IGNORECASE):
         result.add(f"{int(number_text)}count")
@@ -321,7 +396,7 @@ def measurements(value: str, context_size: str = "") -> set[str]:
 
     # Pattern for "N x NUMBER" without explicit unit (implicit from context)
     if inferred_unit and context_unit_value is not None:
-        # Pattern: "4 x 120" (pack count x unit size)
+        # Pattern: "4 x 120" (pack count x unit size) - with spaces around x
         implicit_pattern = re.compile(
             rf"(?<!\w)(\d{{1,3}})\s*[x×]\s*(\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
             re.IGNORECASE,
@@ -333,12 +408,36 @@ def measurements(value: str, context_size: str = "") -> set[str]:
                 # Also add the pack count
                 result.add(f"{int(number_text)}count")
 
-        # Pattern: "120 x 4" (unit size x pack count, reversed)
+        # Pattern: "4x120" (pack count x unit size) - NO spaces around x
+        implicit_no_space = re.compile(
+            rf"(?<!\w)(\d{{1,3}})[x×](\d+(?:[.,]\d+)?)\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+            re.IGNORECASE,
+        )
+        for number_text, unit_text in implicit_no_space.findall(value):
+            number = Decimal(unit_text.replace(",", "."))
+            if abs(number - context_unit_value) < Decimal("0.01"):
+                result.add(normalized_measurement(number, inferred_unit))
+                # Also add the pack count
+                result.add(f"{int(number_text)}count")
+
+        # Pattern: "120 x 4" (unit size x pack count, reversed) - with spaces
         implicit_reversed = re.compile(
             rf"(?<!\w)(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d{{1,3}})\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
             re.IGNORECASE,
         )
         for number_text, pack_text in implicit_reversed.findall(value):
+            number = Decimal(number_text.replace(",", "."))
+            pack_count = int(pack_text)
+            if abs(number - context_unit_value) < Decimal("0.01") and pack_count <= 100:
+                result.add(normalized_measurement(number, inferred_unit))
+                result.add(f"{pack_count}count")
+
+        # Pattern: "120x4" (unit size x pack count, reversed) - NO spaces
+        implicit_reversed_no_space = re.compile(
+            rf"(?<!\w)(\d+(?:[.,]\d+)?)[x×](\d{{1,3}})\b(?!\s*(?:fl\s?oz|millilitres?|milliliters?|ml|cl|litres?|liters?|l|kilograms?|kg|milligrams?|mg|grams?|grammes?|gm|g|centimetres?|centimeters?|cm|millimetres?|millimeters?|mm|metres?|meters?|m|pieces?|pcs?|tablets?|wipes?|sachets?|capsules?|packs?|pks?|count|ct|units?))",
+            re.IGNORECASE,
+        )
+        for number_text, pack_text in implicit_reversed_no_space.findall(value):
             number = Decimal(number_text.replace(",", "."))
             pack_count = int(pack_text)
             if abs(number - context_unit_value) < Decimal("0.01") and pack_count <= 100:
@@ -542,7 +641,12 @@ def exact_ean_in_text(ean: str, value: str) -> bool:
 def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict[str, Any]:
     candidate_title = normalize_text(str(candidate.get("amazonTitle") or candidate.get("title", "")))
     listing_text = str(candidate.get("cardText", ""))
-    candidate_tokens = tokens(candidate_title)
+
+    # Filter descriptors from Amazon title for matching purposes
+    # This removes words like "Concentrated", "Original", "Professional" etc.
+    filtered_candidate_title = PRODUCT_DESCRIPTORS.filter_descriptors(candidate_title)
+    candidate_tokens = tokens(filtered_candidate_title)
+
     product_tokens = tokens(clean_title(" ".join(part for part in (product.title, product.image_terms) if part)))
     brand_tokens = tokens(clean_title(product.brand))
     variant_tokens = tokens(clean_title(product.variant))
@@ -582,12 +686,14 @@ def classify_candidate(product: MatchRequest, candidate: dict[str, Any]) -> dict
         for token in distinctive_title_tokens
         if token not in TITLE_CONNECTOR_WORDS and not re.search(r"\d", token)
     }
+    # Also filter descriptors from distinctive tokens for variant matching
+    distinctive_title_tokens = PRODUCT_DESCRIPTORS.filter_descriptors_tokens(distinctive_title_tokens)
     title_variant_match = distinctive_title_tokens.issubset(candidate_tokens)
     variant_match = (not variant_tokens or variant_tokens.issubset(candidate_tokens)) and title_variant_match
     source_size = source_size_text(product)
     expected_measurements = measurements(source_size)
     size_match = not source_size or (
-        measurements_match(expected_measurements, measurements(candidate_title, source_size))
+        measurements_match(expected_measurements, measurements(filtered_candidate_title, source_size))
         if expected_measurements
         else tokens(clean_title(source_size)).issubset(candidate_tokens)
     )
@@ -1009,18 +1115,73 @@ def fetch_amazon_page(url: str, request_error_message: str) -> str:
                 if urlparse(response.url).hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
                     _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
                     raise AmazonBlocked("Amazon redirected the lookup to a security or sign-in page.")
-                html = read_limited_response(response, MAX_PAGE_BYTES)
-                if response.status_code in {403, 429, 503}:
-                    _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
-                    raise AmazonBlocked("Amazon is temporarily limiting requests. Wait before trying again.")
-                if response.status_code != 200:
-                    raise RuntimeError(f"Amazon UK returned HTTP {response.status_code}.")
-                html_text = html.decode("utf-8", errors="replace")
-                lowered = html_text.lower()
-                if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
-                    _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
-                    raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The lookup stopped without retrying.")
-                return html_text
+
+                # Handle 500 errors with retry logic
+                if response.status_code == 500:
+                    retry_count = 0
+                    max_retries = 3
+                    while retry_count < max_retries:
+                        retry_count += 1
+                        try:
+                            wait_seconds = AMAZON_MIN_GAP_SECONDS - (now - _last_amazon_request_at)
+                            if wait_seconds > 0:
+                                time.sleep(wait_seconds)
+
+                            response = session.get(
+                                url,
+                                headers=HEADERS,
+                                timeout=AMAZON_TIMEOUT_SECONDS,
+                                allow_redirects=True,
+                                stream=True,
+                            )
+                            _last_amazon_request_at = time.monotonic()
+                            if urlparse(response.url).hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
+                                _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                                raise AmazonBlocked("Amazon redirected the lookup to a security or sign-in page.")
+
+                            if response.status_code in {403, 429, 503}:
+                                _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                                raise AmazonBlocked("Amazon is temporarily limiting requests. Wait before trying again.")
+
+                            if response.status_code != 200:
+                                raise RuntimeError(f"Amazon UK returned HTTP {response.status_code}.")
+
+                            html = read_limited_response(response, MAX_PAGE_BYTES)
+                            lowered = html.decode("utf-8", errors="replace")
+                            if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
+                                _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                                raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The lookup stopped without retrying.")
+                            return html_text
+
+                        except requests.RequestException as error:
+                            raise
+                        except Exception as error:
+                            if retry_count < max_retries:
+                                time.sleep(2 ** retry_count)
+                                retry_count += 1
+                            else:
+                                raise
+
+                    raise RuntimeError(f"Amazon UK returned HTTP 500 after {max_retries} retries")
+
+                else:
+                    _last_amazon_request_at = time.monotonic()
+                    if urlparse(response.url).hostname not in {"amazon.co.uk", "www.amazon.co.uk"}:
+                        _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                        raise AmazonBlocked("Amazon redirected the lookup to a security or sign-in page.")
+                    html = read_limited_response(response, MAX_PAGE_BYTES)
+                    if response.status_code in {403, 429, 503}:
+                        _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                        raise AmazonBlocked("Amazon is temporarily limiting requests. Wait before trying again.")
+                    if response.status_code != 200:
+                        raise RuntimeError(f"Amazon UK returned HTTP {response.status_code}.")
+                    html_text = html.decode("utf-8", errors="replace")
+                    lowered = html_text.lower()
+                    if "captcha" in lowered or "automated access" in lowered or "validatecaptcha" in lowered:
+                        _amazon_blocked_until = time.monotonic() + AMAZON_BLOCK_COOLDOWN_SECONDS
+                        raise AmazonBlocked("Amazon is showing a CAPTCHA or automated-access block. The lookup stopped without retrying.")
+                    return html_text
+
         except requests.RequestException as error:
             _last_amazon_request_at = time.monotonic()
             raise RuntimeError(request_error_message) from error
@@ -1115,10 +1276,12 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     Priority 1: Brand + Title (BROAD - no size constraint)
       - brand + title_without_brand
       - brand + title_without_brand + variant
+      - WITH descriptor expansion for better coverage
 
     Priority 2: Brand + Title + Size (CONSTRAINED - only if Priority 1 finds no brand+size match)
       - brand + title_without_brand + size
       - brand + title_without_brand + size + variant
+      - WITH descriptor expansion
 
     Priority 3: Original Title (user's exact manual search text)
       - raw_title (preserves exact text including parentheses)
@@ -1140,6 +1303,7 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     - Size is ONLY added as constraint if broad search fails to find brand+size matches
     - Raw title preserved for exact manual search replication
     - Pack count variations (4x120ml, 4x120, 120x4) handled by matching logic, not query building
+    - Product descriptors (Concentrated, Original, Professional, etc.) expanded in queries
     """
     queries: list[tuple[str, str]] = []
 
@@ -1148,6 +1312,8 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     raw_title = product.title
     variant = clean_title(product.variant)
     image_terms = product.image_terms
+    pack = product.pack
+    category = product.category
 
     # Clean title: remove parentheticals like (wsl), TEMU, ^ chars
     cleaned_title = clean_title(raw_title)
@@ -1170,29 +1336,46 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
         if query:
             queries.append((stage, query))
 
+    def add_descriptor_expanded_queries(stage: str, parts: list[str]):
+        """Add base query plus descriptor-expanded versions."""
+        base_query = clean_title(" ".join(filter(None, parts)))
+        if not base_query:
+            return
+        add_query(stage, [base_query])
+        # Expand with product descriptors
+        expanded = PRODUCT_DESCRIPTORS.expand_query(
+            base_query,
+            brand=brand,
+            category=category,
+            max_expansions=2  # Add top 2 descriptor variants
+        )
+        for i, exp_query in enumerate(expanded[1:], 1):  # Skip base (already added)
+            exp_stage = f"{stage}-desc{i}"
+            queries.append((exp_stage, exp_query))
+
     # --- Priority 1: Brand + Title (BROAD - no size constraint) ---
     # This finds ALL listings for this brand+title, including different pack sizes
     if brand and title_without_brand:
-        add_query("brand-title", [brand, title_without_brand])
+        add_descriptor_expanded_queries("brand-title", [brand, title_without_brand])
         if pack and pack != "":
-            add_query("brand-title-pack", [brand, title_without_brand, pack])
+            add_descriptor_expanded_queries("brand-title-pack", [brand, title_without_brand, pack])
 
     if brand and title_without_brand and variant:
-        add_query("brand-title-variant", [brand, title_without_brand, variant])
+        add_descriptor_expanded_queries("brand-title-variant", [brand, title_without_brand, variant])
         if pack and pack != "":
-            add_query("brand-title-variant-pack", [brand, title_without_brand, variant, pack])
+            add_descriptor_expanded_queries("brand-title-variant-pack", [brand, title_without_brand, variant, pack])
 
     # --- Priority 2: Brand + Title + Size (CONSTRAINED - only if Priority 1 fails) ---
     # Only run if Priority 1 found NO brand+size matches
     if brand and title_without_brand and size:
-        add_query("brand-title-size", [brand, title_without_brand, size])
+        add_descriptor_expanded_queries("brand-title-size", [brand, title_without_brand, size])
         if pack and pack != "":
-            add_query("brand-title-size-pack", [brand, title_without_brand, size, pack])
+            add_descriptor_expanded_queries("brand-title-size-pack", [brand, title_without_brand, size, pack])
 
     if brand and title_without_brand and size and variant:
-        add_query("brand-title-size-variant", [brand, title_without_brand, size, variant])
+        add_descriptor_expanded_queries("brand-title-size-variant", [brand, title_without_brand, size, variant])
         if pack and pack != "":
-            add_query("brand-title-size-variant-pack", [brand, title_without_brand, size, variant, pack])
+            add_descriptor_expanded_queries("brand-title-size-variant-pack", [brand, title_without_brand, size, variant, pack])
 
     # --- Priority 3: Original Title (Exact user text - preserves parentheses) ---
     # This replicates what user would type manually into Amazon search

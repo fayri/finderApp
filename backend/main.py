@@ -23,7 +23,7 @@ AMAZON_MIN_GAP_SECONDS = 3.0
 AMAZON_TIMEOUT_SECONDS = 15
 AMAZON_BLOCK_COOLDOWN_SECONDS = 60.0
 MAX_PAGE_BYTES = 4 * 1024 * 1024
-MAX_SEARCH_QUERIES = 10
+MAX_SEARCH_QUERIES = 40  # Allow all priority queries to run across all Amazon pages
 MAX_BRAND_DETAIL_LOOKUPS = 5
 # MAX_MATCH_CANDIDATES removed - return all findings
 TITLE_QUERY_STAGES = {"brand-size", "brand-variant", "brand-title-size", "brand-title-size-variant", "brand-title", "brand-title-variant", "size-title", "size-title-variant", "title-only", "title-variant", "title-original", "image", "image-brand-size"}
@@ -1174,17 +1174,25 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     # This finds ALL listings for this brand+title, including different pack sizes
     if brand and title_without_brand:
         add_query("brand-title", [brand, title_without_brand])
+        if pack and pack != "":
+            add_query("brand-title-pack", [brand, title_without_brand, pack])
 
     if brand and title_without_brand and variant:
         add_query("brand-title-variant", [brand, title_without_brand, variant])
+        if pack and pack != "":
+            add_query("brand-title-variant-pack", [brand, title_without_brand, variant, pack])
 
     # --- Priority 2: Brand + Title + Size (CONSTRAINED - only if Priority 1 fails) ---
     # Only run if Priority 1 found NO brand+size matches
     if brand and title_without_brand and size:
         add_query("brand-title-size", [brand, title_without_brand, size])
+        if pack and pack != "":
+            add_query("brand-title-size-pack", [brand, title_without_brand, size, pack])
 
     if brand and title_without_brand and size and variant:
         add_query("brand-title-size-variant", [brand, title_without_brand, size, variant])
+        if pack and pack != "":
+            add_query("brand-title-size-variant-pack", [brand, title_without_brand, size, variant, pack])
 
     # --- Priority 3: Original Title (Exact user text - preserves parentheses) ---
     # This replicates what user would type manually into Amazon search

@@ -1026,13 +1026,45 @@ def fetch_amazon_page(url: str, request_error_message: str) -> str:
             raise RuntimeError(request_error_message) from error
 
 
-def search_amazon(query: str, ean: str) -> list[dict[str, Any]]:
-    search_url = f"{AMAZON_ORIGIN}/s?{urllib.parse.urlencode({'k': query})}"
+def search_amazon(query: str, ean: str, page: int = 1) -> list[dict[str, Any]]:
+    search_url = f"{AMAZON_ORIGIN}/s?{urllib.parse.urlencode({'k': query, 'page': page})}"
     html_text = fetch_amazon_page(search_url, "The Amazon UK search could not be reached. Try again later.")
     lowered = html_text.lower()
     if "no results for" in lowered or "did not match any products" in lowered:
         return []
     return extract_amazon_candidates(html_text, ean)
+
+
+def search_amazon_all_pages(query: str, ean: str, max_pages: int = 5) -> list[dict[str, Any]]:
+    """Search Amazon across multiple pages to find all matching products."""
+    all_candidates: list[dict[str, Any]] = []
+    seen_asins: set[str] = set()
+
+    for page in range(1, max_pages + 1):
+        try:
+            candidates = search_amazon(query, ean, page)
+        except AmazonBlocked:
+            # Amazon is blocking us - return what we have so far
+            break
+        except (RuntimeError, requests.RequestException, ValueError):
+            # Error on this page - try next page
+            continue
+
+        if not candidates:
+            # No candidates on this page - Amazon likely has no more results
+            break
+
+        for candidate in candidates:
+            asin = candidate.get("asin", "")
+            if asin and asin not in seen_asins:
+                seen_asins.add(asin)
+                all_candidates.append(candidate)
+
+        # If we got fewer results than a full page, we're likely at the last page
+        if len(candidates) < 20:
+            break
+
+    return all_candidates
 
 
 @app.post("/api/amazon/offer")
@@ -1313,7 +1345,7 @@ def match_product(product: MatchRequest):
         searched_queries.append({"stage": stage, "query": query})
         searched_query_keys.add(query.casefold())
         page_has_relevant_candidate = False
-        page_candidates = search_amazon(query, product.ean)
+        page_candidates = search_amazon_all_pages(query, product.ean, max_pages=5)
         for raw_candidate in page_candidates:
             classified = classify_candidate(effective_product, raw_candidate)
             if not classified:

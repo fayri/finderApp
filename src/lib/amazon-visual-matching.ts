@@ -281,7 +281,9 @@ function candidateRank(candidate: AmazonSearchCandidate): [number, number, numbe
   const brandRank = candidate.brandMatch === false ? 0 : 1;
   const eanRank = candidate.eanMatch && candidate.visualVerdict !== "different" ? 1 : 0;
   const packRank = Number(
-    candidate.packMatchType === "exact" || candidate.packMatchType === "single-item-fallback",
+    candidate.packMatchType === "exact"
+      || candidate.packMatchType === "single-item-fallback"
+      || candidate.packMatchType === "pack-count-difference-allowed",
   );
   return [sizeRank, brandRank, variantRank, eanRank, titleScore, visualRank, imageScore, packRank];
 }

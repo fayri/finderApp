@@ -28,7 +28,7 @@ export interface AmazonSearchCandidate {
   variantMatch?: boolean;
   sizeMatch: boolean;
   packMatch?: boolean;
-  packMatchType?: "exact" | "single-item-fallback" | "mismatch" | "unspecified";
+  packMatchType?: "exact" | "single-item-fallback" | "pack-count-difference-allowed" | "mismatch" | "unspecified";
   amazonPackCount?: number;
   amazonPackBreakdown?: string;
   amazonUnitPrice?: string;

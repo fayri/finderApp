@@ -153,22 +153,27 @@ function AttributeMatchSummary({ result, candidate }: { result: AmazonMatchRow; 
     <div className="amazon-attribute-checks" role="list" aria-label="Quick supplier attribute checks" style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "12px" }}>
       {attributes.map(({ label, value, match }) => {
         const isSingleItemFallback = label === "Pack" && candidate.packMatchType === "single-item-fallback";
-        const packDifferenceAllowed = label === "Pack" && match === false;
+        const isPackCountDiffAllowed = label === "Pack" && candidate.packMatchType === "pack-count-difference-allowed";
+        const packDifferenceAllowed = label === "Pack" && (match === false || isPackCountDiffAllowed);
         const state = match === true || packDifferenceAllowed ? "match" : match === false ? "mismatch" : "unknown";
-        const stateLabel = packDifferenceAllowed
-          ? "Allowed difference"
-          : isSingleItemFallback
-            ? "Single-item fallback"
-            : match === true
-              ? "Match"
-              : match === false
-                ? "Mismatch"
-                : "Check";
-        const displayValue = packDifferenceAllowed
-          ? `${value} (pack count may differ)`
-          : isSingleItemFallback
-            ? `${value} (single-item fallback)`
-            : value;
+        const stateLabel = isPackCountDiffAllowed
+          ? "Pack count differs (allowed)"
+          : packDifferenceAllowed
+            ? "Allowed difference"
+            : isSingleItemFallback
+              ? "Single-item fallback"
+              : match === true
+                ? "Match"
+                : match === false
+                  ? "Mismatch"
+                  : "Check";
+        const displayValue = isPackCountDiffAllowed
+          ? `${value} (pack count differs - same item size)`
+          : packDifferenceAllowed
+            ? `${value} (pack count may differ)`
+            : isSingleItemFallback
+              ? `${value} (single-item fallback)`
+              : value;
         const stateColors = {
           match: { bg: "#dcfce7", color: "#166534", iconColor: "#16a34a" },
           mismatch: { bg: "#fee2e2", color: "#991b1b", iconColor: "#dc2626" },

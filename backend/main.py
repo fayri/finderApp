@@ -333,7 +333,14 @@ def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[boo
     if expected_quantity is not None:
         outer_count, inner_count, listing_quantity = extract_amazon_pack_components(candidate_title)
         source_size_quantity = source_size_pack_quantity(size)
-        expected_total_quantity = expected_quantity * source_size_quantity if source_size_quantity else expected_quantity
+
+        # If size contains count info (e.g., "20count"), multiply to get total units
+        # If size is just volume/weight (e.g., "120ml"), pack quantity IS the item count
+        if source_size_quantity is not None:
+            expected_total_quantity = expected_quantity * source_size_quantity
+        else:
+            expected_total_quantity = expected_quantity
+
         if expected_total_quantity == listing_quantity:
             return True, "exact"
         if inner_count is not None and source_size_quantity == inner_count and expected_quantity == outer_count:
@@ -343,6 +350,15 @@ def classify_pack_match(pack: str, size: str, candidate_title: str) -> tuple[boo
             or (outer_count == 1 and inner_count is not None and source_size_quantity == inner_count)
         ):
             return True, "single-item-fallback"
+
+        # Allow pack count difference when both are multi-packs of the SAME item size
+        # e.g., supplier 6 x 120ml vs Amazon 4 x 120ml
+        # Both are multi-packs (quantity > 1) of the same unit volume
+        if expected_quantity > 1 and listing_quantity > 1 and source_size_quantity is None:
+            # Both are multi-packs of a volume/weight item (not count-based)
+            # The item size (120ml) matches, so pack count difference is allowed
+            return True, "pack-count-difference-allowed"
+
         return False, "mismatch"
 
     expected_words = tokens(pack)
@@ -958,60 +974,105 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
     """
     Build search queries prioritized as: brand -> size -> title -> image
     NO EAN search, NO Category search. EAN is only used for verification.
+    Avoids duplicating size when already present in title.
+    Uses title without brand for broader queries (brand already added separately).
     """
     queries: list[tuple[str, str]] = []
 
     size = source_size_text(product)
     brand = product.brand
-    title = clean_title(product.title)
+    raw_title = product.title
     variant = clean_title(product.variant)
     image_terms = product.image_terms
 
+    # Clean title and extract size from it to avoid duplication
+    cleaned_title = clean_title(raw_title)
+    title_has_size = bool(size and size.lower() in cleaned_title.lower())
+
+    # Title without size for queries that already include size explicitly
+    title_without_size = cleaned_title
+    if title_has_size and size:
+        title_without_size = re.sub(
+            rf"(?i)\b{re.escape(size)}\b",
+            "",
+            cleaned_title
+        ).strip()
+        title_without_size = " ".join(title_without_size.split())
+
+    # Title without brand for queries that add brand separately
+    # This avoids "Zoflora Zoflora Disinfectant..." duplicates
+    title_without_brand = cleaned_title
+    if brand:
+        brand_tokens = set(clean_title(brand).lower().split())
+        title_words = title_without_brand.split()
+        title_without_brand = " ".join(w for w in title_words if w.lower() not in brand_tokens)
+
+    # Title without both brand and size
+    title_without_brand_and_size = title_without_brand
+    if title_has_size and size:
+        title_without_brand_and_size = re.sub(
+            rf"(?i)\b{re.escape(size)}\b",
+            "",
+            title_without_brand
+        ).strip()
+        title_without_brand_and_size = " ".join(title_without_brand_and_size.split())
+
+    def add_query(stage: str, parts: list[str]):
+        """Add query if it has content."""
+        query = clean_title(" ".join(filter(None, parts)))
+        if query:
+            queries.append((stage, query))
+
     # --- Priority 1: Brand + Size (most specific, narrowest results) ---
     if brand and size:
-        brand_size_query = clean_title(f"{brand} {size}")
-        queries.append(("brand-size", brand_size_query))
+        add_query("brand-size", [brand, size])
 
     # Brand + Size + Variant
     if brand and size and variant:
-        brand_size_variant_query = clean_title(f"{brand} {size} {variant}")
-        queries.append(("brand-size-variant", brand_size_variant_query))
+        add_query("brand-size-variant", [brand, size, variant])
 
-    # --- Priority 2: Brand + Title + Size ---
-    if brand and title and size:
-        brand_title_size_query = clean_title(f"{brand} {title} {size}")
-        queries.append(("brand-title-size", brand_title_size_query))
+    # --- Priority 2: Brand + Title (size already in title) ---
+    # When title already has size, don't add it again
+    if brand and cleaned_title:
+        if title_has_size and size:
+            add_query("brand-title-size", [brand, title_without_brand_and_size])  # size & brand already in title
+        else:
+            add_query("brand-title-size", [brand, cleaned_title, size])
 
-    # Brand + Title + Size + Variant
-    if brand and title and size and variant:
-        brand_title_size_variant_query = clean_title(f"{brand} {title} {size} {variant}")
-        queries.append(("brand-title-size-variant", brand_title_size_variant_query))
+    # Brand + Title + Variant (size already in title)
+    if brand and cleaned_title and variant:
+        if title_has_size and size:
+            add_query("brand-title-size-variant", [brand, title_without_brand_and_size, variant])
+        else:
+            add_query("brand-title-size-variant", [brand, cleaned_title, size, variant])
 
     # --- Priority 3: Brand + Title (without size for broader match) ---
-    if brand and title:
-        brand_title_query = clean_title(f"{brand} {title}")
-        queries.append(("brand-title", brand_title_query))
+    # Use title without brand to avoid "Zoflora Zoflora..."
+    if brand and title_without_brand:
+        add_query("brand-title", [brand, title_without_brand])
 
-    if brand and title and variant:
-        brand_title_variant_query = clean_title(f"{brand} {title} {variant}")
-        queries.append(("brand-title-variant", brand_title_variant_query))
+    if brand and title_without_brand and variant:
+        add_query("brand-title-variant", [brand, title_without_brand, variant])
 
     # --- Priority 4: Size + Title (when brand not available) ---
-    if size and title:
-        size_title_query = clean_title(f"{size} {title}")
-        queries.append(("size-title", size_title_query))
+    if size and cleaned_title:
+        if title_has_size:
+            add_query("size-title", [title_without_brand_and_size])  # size already in title
+        else:
+            add_query("size-title", [size, cleaned_title])
 
-    if size and title and variant:
-        size_title_variant_query = clean_title(f"{size} {title} {variant}")
-        queries.append(("size-title-variant", size_title_variant_query))
+    if size and cleaned_title and variant:
+        if title_has_size:
+            add_query("size-title-variant", [title_without_brand_and_size, variant])
+        else:
+            add_query("size-title-variant", [size, cleaned_title, variant])
 
     # --- Priority 5: Title only (broadest) ---
-    if title:
-        queries.append(("title-only", title))
+    if cleaned_title:
+        add_query("title-only", [cleaned_title])
 
-    if title and variant:
-        title_variant_query = clean_title(f"{title} {variant}")
-        queries.append(("title-variant", title_variant_query))
+    if cleaned_title and variant:
+        add_query("title-variant", [cleaned_title, variant])
 
     # --- Priority 6: Image-based searches (when image_terms available) ---
     if image_terms:
@@ -1020,8 +1081,8 @@ def build_search_queries(product: MatchRequest) -> list[tuple[str, str]]:
             image_query_parts.append(brand)
         if size:
             image_query_parts.append(size)
-        if title:
-            image_query_parts.append(title)
+        if cleaned_title:
+            image_query_parts.append(cleaned_title)
         if variant:
             image_query_parts.append(variant)
         image_query_parts.append(image_terms)

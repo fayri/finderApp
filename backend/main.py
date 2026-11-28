@@ -1351,24 +1351,25 @@ def match_product(product: MatchRequest):
         # Disabled - no EAN search, only title-based matching
         return False
 
-    def has_brand_and_size_match() -> bool:
-        """Check if any candidate has both brandMatch and sizeMatch - the 'basic law' for stopping search."""
+    def has_exact_product_match() -> bool:
+        """Check if we found the exact product match (high tier) - the ONLY stopping condition.
+
+        We do NOT stop early on medium or low tier matches because they could be
+        wrong variants (e.g., Zoflora Linen Fresh instead of Lemon Zing).
+        Only stop when we have a high tier match (EAN or near-perfect title match).
+        """
         return any(
-            classified["brandMatch"]
-            and classified["sizeMatch"]
+            classified["tier"] == "high"
             for candidate in candidates_by_key.values()
             for classified in (classify_candidate(effective_product, candidate),)
         )
 
     try:
         discovery_needed = not product.brand
-        # Run queries in priority order: brand+title → brand+title+size → title-original → title-only → brand+size → brand+variant → image
-        # Early exit when we have BOTH brandMatch AND sizeMatch (the "basic law")
+        # Run ALL queries in priority order - NO early exit.
+        # Check every page of Amazon results to find the best match.
         for stage, query in initial_queries:
             page_has_relevant_candidate = search_and_collect(stage, query)
-            # Early exit: if we found a candidate with BOTH brand AND size match, stop searching
-            if has_brand_and_size_match():
-                break
 
         if discovery_needed and candidates_by_key:
             discovered_brand = discover_product_brand(product, candidates_by_key)
@@ -1380,9 +1381,6 @@ def match_product(product: MatchRequest):
                 if query.casefold() in searched_query_keys or len(searched_queries) >= MAX_SEARCH_QUERIES:
                     continue
                 page_has_relevant_candidate = search_and_collect(stage, query)
-                # Early exit after brand discovery too
-                if has_brand_and_size_match():
-                    break
     except AmazonBlocked as error:
         candidates = ranked_candidates()
         return {
